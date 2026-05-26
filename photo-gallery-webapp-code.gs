@@ -13,7 +13,7 @@
  * 1. Replace FOLDER_ID below with your Google Drive folder ID.
  * 2. Deploy as Web app.
  * 3. Recommended deployment:
- *    - Execute as: Me
+ *    - Execute as: User accessing the web app
  *    - Who has access: Anyone
  * 4. Embed the Web app URL into Google Sites.
  *******************************************************/
@@ -43,15 +43,13 @@ const CONFIG = {
 
   // Delay between selected downloads, in milliseconds.
   // This reduces browser blocking when many files are selected.
-  DOWNLOAD_DELAY_MS: 650
+  DOWNLOAD_DELAY_MS: 650,
 };
 
 function doGet() {
-  const photos = getPhotosFromDriveFolder_();
-  const html = buildGalleryHtml_(photos);
+  const html = buildGalleryHtml_(getPhotosFromDriveFolder_());
 
-  return HtmlService
-    .createHtmlOutput(html)
+  return HtmlService.createHtmlOutput(html)
     .setTitle(CONFIG.GALLERY_TITLE)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
@@ -67,27 +65,25 @@ function getPhotosFromDriveFolder_() {
 }
 
 function collectImagesFromFolder_(folder, photos) {
-  const files = folder.getFiles();
+  // Server-side filter: only fetch image files instead of all files.
+  const files = folder.searchFiles("mimeType contains 'image/'");
+  const szParam = "&sz=" + encodeURIComponent(CONFIG.THUMBNAIL_SIZE);
 
   while (files.hasNext()) {
     const file = files.next();
-    const mimeType = file.getMimeType();
-
-    if (!mimeType || !mimeType.startsWith("image/")) {
-      continue;
-    }
-
     const id = file.getId();
-    const name = file.getName();
+    const encodedId = encodeURIComponent(id);
 
     photos.push({
       id: id,
-      name: name,
-      mimeType: mimeType,
+      name: file.getName(),
+      mimeType: file.getMimeType(),
       updated: file.getLastUpdated().getTime(),
       viewUrl: file.getUrl(),
-      previewUrl: "https://drive.google.com/thumbnail?id=" + encodeURIComponent(id) + "&sz=" + encodeURIComponent(CONFIG.THUMBNAIL_SIZE),
-      downloadUrl: "https://drive.google.com/uc?export=download&id=" + encodeURIComponent(id)
+      previewUrl:
+        "https://drive.google.com/thumbnail?id=" + encodedId + szParam,
+      downloadUrl:
+        "https://drive.google.com/uc?export=download&id=" + encodedId,
     });
   }
 
@@ -100,22 +96,44 @@ function collectImagesFromFolder_(folder, photos) {
   }
 }
 
+function getFileForDownload(fileId) {
+  const file = DriveApp.getFileById(fileId);
+  const blob = file.getBlob();
+  return {
+    data: Utilities.base64Encode(blob.getBytes()),
+    name: file.getName(),
+    mimeType: blob.getContentType(),
+  };
+}
+
+function getFilesAsZip(fileIds) {
+  const blobs = fileIds.map(function (id) {
+    return DriveApp.getFileById(id).getBlob();
+  });
+  const zip = Utilities.zip(blobs, "photos.zip");
+  return {
+    data: Utilities.base64Encode(zip.getBytes()),
+    name: "photos.zip",
+    mimeType: "application/zip",
+  };
+}
+
 function sortPhotos_(photos) {
-  if (CONFIG.SORT_BY === "newest") {
-    photos.sort((a, b) => b.updated - a.updated || a.name.localeCompare(b.name));
-    return;
-  }
+  const comparators = {
+    newest: (a, b) => b.updated - a.updated || a.name.localeCompare(b.name),
+    oldest: (a, b) => a.updated - b.updated || a.name.localeCompare(b.name),
+    name: (a, b) =>
+      a.name.localeCompare(b.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+  };
 
-  if (CONFIG.SORT_BY === "oldest") {
-    photos.sort((a, b) => a.updated - b.updated || a.name.localeCompare(b.name));
-    return;
-  }
-
-  photos.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+  photos.sort(comparators[CONFIG.SORT_BY] || comparators.name);
 }
 
 function buildGalleryHtml_(photos) {
-  const photoCards = photos.map(photo => buildPhotoCard_(photo)).join("\n");
+  const photoCards = photos.map((photo) => buildPhotoCard_(photo)).join("\n");
 
   return `
 <!DOCTYPE html>
@@ -127,16 +145,8 @@ function buildGalleryHtml_(photos) {
     :root {
       --bg: #ffffff;
       --text: #111111;
-      --muted: #747474;
-      --line: rgba(17,17,17,0.08);
-      --soft-line: rgba(255,255,255,0.38);
-      --panel: rgba(255,255,255,0.86);
-      --panel-strong: rgba(255,255,255,0.96);
-      --shadow: 0 12px 32px rgba(0,0,0,0.08);
-      --shadow-hover: 0 20px 44px rgba(0,0,0,0.14);
-      --radius-lg: 22px;
-      --radius-md: 16px;
-      --radius-pill: 999px;
+      --muted: #666666;
+      --line: rgba(0,0,0,0.10);
     }
 
     * {
@@ -149,57 +159,51 @@ function buildGalleryHtml_(photos) {
       padding: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, Helvetica, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
     }
 
     body {
-      padding: 26px;
+      padding: 24px;
     }
 
     .shell {
-      max-width: 1440px;
+      max-width: 1400px;
       margin: 0 auto;
     }
 
     .topbar {
       position: sticky;
-      top: 16px;
+      top: 0;
       z-index: 50;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 18px;
-      padding: 14px 16px;
-      margin-bottom: 26px;
-      border: 1px solid var(--line);
-      border-radius: 20px;
-      background: var(--panel);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      gap: 16px;
+      padding: 16px 0;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg);
     }
 
     .topbar-left {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
       min-width: 0;
     }
 
     .selection-count {
-      min-width: 36px;
-      height: 36px;
+      min-width: 28px;
+      height: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      padding: 0 11px;
-      border-radius: var(--radius-pill);
-      background: #111111;
+      padding: 0 8px;
+      background: var(--text);
       color: #ffffff;
-      font-size: 13px;
-      font-weight: 650;
+      font-size: 12px;
+      font-weight: 600;
       line-height: 1;
     }
 
@@ -208,104 +212,88 @@ function buildGalleryHtml_(photos) {
     }
 
     .gallery-title {
-      font-size: 17px;
-      line-height: 1.2;
-      font-weight: 650;
-      letter-spacing: -0.025em;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      font-size: 15px;
+      line-height: 1.3;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
 
     .gallery-subtitle {
-      margin-top: 2px;
-      font-size: 13px;
-      line-height: 1.35;
+      margin-top: 1px;
+      font-size: 12px;
+      line-height: 1.4;
       color: var(--muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     .topbar-actions {
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      gap: 9px;
-      flex-wrap: wrap;
+      gap: 8px;
     }
 
     button {
       appearance: none;
-      border: 0;
+      border: 1px solid var(--line);
       margin: 0;
-      border-radius: var(--radius-pill);
-      padding: 10px 15px;
+      padding: 8px 14px;
       font: inherit;
-      font-size: 13px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
-      transition: transform 160ms ease, opacity 160ms ease, box-shadow 160ms ease, background 160ms ease;
+      background: var(--bg);
+      color: var(--text);
+      transition: background 120ms ease;
     }
 
     button:hover {
-      transform: translateY(-1px);
-    }
-
-    button:active {
-      transform: translateY(0);
+      background: #f5f5f5;
     }
 
     .btn-primary {
-      background: #111111;
+      background: var(--text);
       color: #ffffff;
-      box-shadow: 0 10px 22px rgba(0,0,0,0.13);
+      border-color: var(--text);
     }
 
     .btn-primary:hover {
-      box-shadow: 0 12px 26px rgba(0,0,0,0.18);
+      background: #333333;
     }
 
     .btn-secondary {
-      background: #f4f4f4;
-      color: #111111;
-    }
-
-    .btn-secondary:hover {
-      background: #eeeeee;
+      background: var(--bg);
+      color: var(--text);
     }
 
     .gallery {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
-      gap: 22px;
+      column-count: 3;
+      column-gap: 16px;
     }
 
     .card {
       position: relative;
       overflow: hidden;
-      border-radius: var(--radius-lg);
-      background: #f3f3f3;
-      box-shadow: var(--shadow);
-      transform: translateZ(0);
-      transition: transform 220ms ease, box-shadow 220ms ease, outline-color 180ms ease;
-      outline: 0 solid transparent;
+      background: var(--bg);
+      break-inside: avoid;
+      margin-bottom: 16px;
+      transition: outline-color 120ms ease;
+      outline: 2px solid transparent;
+      outline-offset: -2px;
     }
 
     .card:hover {
-      transform: translateY(-3px);
-      box-shadow: var(--shadow-hover);
+      outline-color: rgba(0,0,0,0.12);
     }
 
     .card.selected {
-      outline: 2px solid #111111;
-      outline-offset: 0;
+      outline: 2px solid var(--text);
+      outline-offset: -2px;
     }
 
     .media {
       position: relative;
       width: 100%;
-      aspect-ratio: 4 / 5;
       overflow: hidden;
       background: #eeeeee;
     }
@@ -319,23 +307,15 @@ function buildGalleryHtml_(photos) {
 
     .card img {
       width: 100%;
-      height: 100%;
+      height: auto;
       display: block;
-      object-fit: cover;
-      transform: scale(1.001);
-      transition: transform 520ms ease, filter 220ms ease;
-      background: #efefef;
-    }
-
-    .card:hover img {
-      transform: scale(1.035);
-      filter: saturate(1.03) contrast(1.02);
+      background: #eeeeee;
     }
 
     .select-control {
       position: absolute;
-      top: 14px;
-      right: 14px;
+      top: 10px;
+      right: 10px;
       z-index: 10;
       cursor: pointer;
       user-select: none;
@@ -351,35 +331,30 @@ function buildGalleryHtml_(photos) {
     }
 
     .select-ui {
-      width: 36px;
-      height: 36px;
+      width: 28px;
+      height: 28px;
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: var(--radius-pill);
       color: transparent;
-      background: rgba(255,255,255,0.74);
-      border: 1px solid rgba(255,255,255,0.72);
-      box-shadow: 0 8px 20px rgba(0,0,0,0.14);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      transition: background 180ms ease, color 180ms ease, transform 180ms ease, border-color 180ms ease;
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(0,0,0,0.15);
+      transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
     }
 
     .select-control:hover .select-ui {
-      transform: scale(1.04);
-      background: rgba(255,255,255,0.92);
+      background: rgba(255,255,255,0.95);
     }
 
     .select-control input:checked + .select-ui {
       color: #ffffff;
-      background: #111111;
-      border-color: #111111;
+      background: var(--text);
+      border-color: var(--text);
     }
 
     .check-icon {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       display: block;
     }
 
@@ -390,11 +365,11 @@ function buildGalleryHtml_(photos) {
       display: flex;
       align-items: flex-end;
       justify-content: center;
-      padding: 18px;
-      background: linear-gradient(to top, rgba(0,0,0,0.48), rgba(0,0,0,0.14) 42%, rgba(0,0,0,0.00) 72%);
+      padding: 12px;
+      background: linear-gradient(to top, rgba(0,0,0,0.35), rgba(0,0,0,0) 50%);
       opacity: 0;
       pointer-events: none;
-      transition: opacity 220ms ease;
+      transition: opacity 150ms ease;
     }
 
     .card:hover .overlay,
@@ -407,82 +382,61 @@ function buildGalleryHtml_(photos) {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      flex-wrap: wrap;
-      transform: translateY(4px);
-      transition: transform 220ms ease;
-    }
-
-    .card:hover .overlay-actions,
-    .card.selected .overlay-actions {
-      transform: translateY(0);
+      gap: 8px;
     }
 
     .overlay-actions a {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 38px;
-      padding: 10px 14px;
-      border-radius: var(--radius-pill);
-      font-size: 13px;
-      font-weight: 650;
+      min-height: 32px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 500;
       text-decoration: none;
-      transition: transform 160ms ease, opacity 160ms ease, background 160ms ease;
-    }
-
-    .overlay-actions a:hover {
-      transform: translateY(-1px);
+      transition: background 120ms ease;
     }
 
     .btn-glass {
       color: #ffffff;
-      background: rgba(255,255,255,0.16);
+      background: rgba(255,255,255,0.18);
       border: 1px solid rgba(255,255,255,0.30);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
     }
 
     .btn-white {
-      color: #111111;
+      color: var(--text);
       background: #ffffff;
-      box-shadow: 0 10px 22px rgba(0,0,0,0.15);
     }
 
     .empty {
-      grid-column: 1 / -1;
-      min-height: 220px;
+      width: 100%;
+      min-height: 200px;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 28px;
-      border: 1px dashed var(--line);
-      border-radius: var(--radius-lg);
+      padding: 24px;
+      border: 1px solid var(--line);
       color: var(--muted);
       text-align: center;
-      font-size: 15px;
+      font-size: 14px;
     }
 
     .download-note {
       position: fixed;
       left: 50%;
-      bottom: 22px;
+      bottom: 20px;
       z-index: 100;
-      transform: translateX(-50%) translateY(18px);
+      transform: translateX(-50%) translateY(12px);
       opacity: 0;
       pointer-events: none;
-      min-width: min(520px, calc(100vw - 36px));
-      padding: 13px 16px;
-      border-radius: 16px;
-      background: rgba(17,17,17,0.92);
+      min-width: min(480px, calc(100vw - 32px));
+      padding: 12px 16px;
+      background: var(--text);
       color: #ffffff;
-      box-shadow: 0 18px 44px rgba(0,0,0,0.22);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       font-size: 13px;
       line-height: 1.4;
       text-align: center;
-      transition: opacity 220ms ease, transform 220ms ease;
+      transition: opacity 150ms ease, transform 150ms ease;
     }
 
     .download-note.visible {
@@ -491,71 +445,49 @@ function buildGalleryHtml_(photos) {
     }
 
     @media (max-width: 920px) {
-      body {
-        padding: 18px;
-      }
-
       .topbar {
-        align-items: stretch;
         flex-direction: column;
-        top: 10px;
+        align-items: stretch;
       }
 
       .topbar-actions {
         justify-content: flex-start;
       }
-
-      .gallery-subtitle {
-        white-space: normal;
-      }
     }
 
     @media (max-width: 620px) {
       body {
-        padding: 14px;
+        padding: 12px;
       }
 
       .gallery {
-        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
-        gap: 14px;
+        column-count: 2;
+        column-gap: 10px;
       }
 
-      .media {
-        aspect-ratio: 1 / 1.18;
-      }
-
-      .topbar {
-        padding: 12px;
-        border-radius: 17px;
-      }
-
-      .gallery-title {
-        font-size: 16px;
-      }
-
-      .gallery-subtitle {
-        font-size: 12px;
+      .card {
+        margin-bottom: 10px;
       }
 
       button {
-        padding: 10px 13px;
-        font-size: 12px;
+        padding: 8px 12px;
+        font-size: 11px;
       }
 
       .select-control {
-        top: 10px;
-        right: 10px;
+        top: 6px;
+        right: 6px;
       }
 
       .select-ui {
-        width: 32px;
-        height: 32px;
+        width: 24px;
+        height: 24px;
       }
 
       .overlay-actions a {
-        min-height: 34px;
-        padding: 8px 12px;
-        font-size: 12px;
+        min-height: 28px;
+        padding: 6px 10px;
+        font-size: 11px;
       }
     }
   </style>
@@ -621,10 +553,27 @@ function buildGalleryHtml_(photos) {
       updateSelection();
     }
 
+    function triggerBlobDownload(base64Data, fileName, mimeType) {
+      var byteChars = atob(base64Data);
+      var byteArray = new Uint8Array(byteChars.length);
+      for (var i = 0; i < byteChars.length; i++) {
+        byteArray[i] = byteChars.charCodeAt(i);
+      }
+      var blob = new Blob([byteArray], { type: mimeType });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    }
+
     function downloadSelected() {
-      const selectedCards = Array.from(document.querySelectorAll(".card"))
-        .filter(card => {
-          const checkbox = card.querySelector(".photo-checkbox");
+      var selectedCards = Array.from(document.querySelectorAll(".card"))
+        .filter(function(card) {
+          var checkbox = card.querySelector(".photo-checkbox");
           return checkbox && checkbox.checked;
         });
 
@@ -633,21 +582,48 @@ function buildGalleryHtml_(photos) {
         return;
       }
 
-      showNote("Starting " + selectedCards.length + " download" + (selectedCards.length === 1 ? "" : "s") + ". If your browser asks, allow multiple downloads.");
-
-      selectedCards.forEach((card, index) => {
-        const downloadUrl = card.getAttribute("data-download");
-
-        window.setTimeout(() => {
-          const link = document.createElement("a");
-          link.href = downloadUrl;
-          link.target = "_blank";
-          link.rel = "noopener";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        }, index * ${Number(CONFIG.DOWNLOAD_DELAY_MS) || 650});
+      var fileIds = selectedCards.map(function(card) {
+        return card.getAttribute("data-id");
       });
+
+      if (fileIds.length === 1) {
+        showNote("Preparing download…");
+        google.script.run
+          .withSuccessHandler(function(result) {
+            triggerBlobDownload(result.data, result.name, result.mimeType);
+            showNote("Download complete.");
+          })
+          .withFailureHandler(function(err) {
+            showNote("Download failed: " + err.message);
+          })
+          .getFileForDownload(fileIds[0]);
+      } else {
+        showNote("Preparing ZIP with " + fileIds.length + " images…");
+        google.script.run
+          .withSuccessHandler(function(result) {
+            triggerBlobDownload(result.data, result.name, result.mimeType);
+            showNote("ZIP download complete.");
+          })
+          .withFailureHandler(function(err) {
+            showNote("Download failed: " + err.message);
+          })
+          .getFilesAsZip(fileIds);
+      }
+    }
+
+    function downloadSingle(event, fileId) {
+      event.preventDefault();
+      event.stopPropagation();
+      showNote("Preparing download…");
+      google.script.run
+        .withSuccessHandler(function(result) {
+          triggerBlobDownload(result.data, result.name, result.mimeType);
+          showNote("Download complete.");
+        })
+        .withFailureHandler(function(err) {
+          showNote("Download failed: " + err.message);
+        })
+        .getFileForDownload(fileId);
     }
 
     function showNote(message) {
@@ -676,11 +652,11 @@ function buildPhotoCard_(photo) {
     : "";
 
   const downloadButton = CONFIG.SHOW_SINGLE_DOWNLOAD_BUTTON
-    ? `<a class="btn-white" href="${escapeHtml_(photo.downloadUrl)}" target="_blank" rel="noopener">Download</a>`
+    ? `<a class="btn-white" href="#" onclick="downloadSingle(event, '${escapeHtml_(photo.id)}')" rel="noopener">Download</a>`
     : "";
 
   return `
-    <article class="card" data-download="${escapeHtml_(photo.downloadUrl)}">
+    <article class="card" data-id="${escapeHtml_(photo.id)}" data-download="${escapeHtml_(photo.downloadUrl)}">
       <div class="media">
         <a class="image-link" href="${escapeHtml_(photo.viewUrl)}" target="_blank" rel="noopener" aria-label="Open image">
           <img src="${escapeHtml_(photo.previewUrl)}" alt="${escapeHtml_(photo.name)}" loading="lazy">
@@ -705,11 +681,15 @@ function buildPhotoCard_(photo) {
     </article>`;
 }
 
+const ESCAPE_MAP_ = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#039;",
+};
+const ESCAPE_RE_ = /[&<>"']/g;
+
 function escapeHtml_(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  return String(value).replace(ESCAPE_RE_, (ch) => ESCAPE_MAP_[ch]);
 }

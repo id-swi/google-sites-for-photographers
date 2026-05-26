@@ -1,240 +1,149 @@
 # Google Sites + Google Drive Photo Gallery Guide
 
-## Goal
+## Overview
 
-This guide explains how to build a clean, low-cost photography distribution website using:
+A photography gallery built entirely on free Google infrastructure:
 
-- Google Sites as the website
-- Google Drive as the original image storage
-- Google Apps Script as the automatic gallery generator
-- A Google Sites embed to show the gallery
+- **Google Drive** stores the original images
+- **Google Apps Script** reads the folder and generates a premium gallery
+- **Google Sites** hosts the page and embeds the gallery
 
-The final result is:
+When you add images to the Drive folder, the gallery updates automatically. No manual HTML editing needed.
 
-```text
-Google Drive folder with images
-    -> Google Apps Script reads the folder
-    -> Google Apps Script creates a premium-looking gallery
-    -> Google Sites embeds the web app
-    -> Users select images directly on the thumbnails
-    -> Users download original-quality files from Drive
-```
-
-The gallery is designed to look clean and professional:
-
-- No visible filenames
-- Selector directly on each image
-- Minimal sticky toolbar
-- Hover download controls
-- Automatic gallery entries for every image in the Drive folder
-- Original-quality downloads from Google Drive
+Gallery features: no visible filenames, checkbox selectors on each image, sticky toolbar, hover download controls, bulk download, responsive layout.
 
 ---
 
-## Recommended Architecture
+## How Previews and Downloads Work
 
-Use this structure:
+The script uses Drive's thumbnail endpoint for gallery previews and the original file for downloads. This keeps page loads fast while delivering full-quality originals.
 
-```text
-Google Drive
-  Client Gallery Folder
-    IMG_001.jpg
-    IMG_002.jpg
-    IMG_003.jpg
+Thumbnail size is set in the script via `THUMBNAIL_SIZE`:
 
-Google Apps Script
-  Reads all image files from the folder
-  Builds the gallery automatically
-
-Google Sites
-  Embeds the Apps Script web app URL
-```
-
-This is better than static HTML in Google Sites because you do not have to manually create one image card per photo. When you add images to the Drive folder, the gallery updates automatically.
+| Value | Result              |
+| ----- | ------------------- |
+| w1200 | Faster, still good  |
+| w1600 | Recommended balance |
+| w2000 | Sharper, heavier    |
 
 ---
 
-## Quality Strategy
+## Security Configuration
 
-The script uses the same original file for two purposes:
+There are three independent permission layers. Restricting one does not restrict the others.
 
 ```text
-Gallery preview:
-  Google Drive thumbnail endpoint, for example w1600
-
-Download:
-  Original file from Google Drive
+1. Google Sites page        (who can open the site)
+2. Google Apps Script        (who can run the web app)
+3. Google Drive folder       (who can view/download files)
 ```
 
-This means:
+### Option A: Site-Gated Access (Recommended)
 
-- The website loads a high-quality preview instead of the full original file.
-- The downloaded file is the original image stored in Drive.
-- The page stays faster than loading every original image directly.
-
-Recommended image setup:
+Google Sites controls who can enter. Drive is open to anyone with the link. The script runs as the visiting user, which lets you tighten Drive permissions later without redeploying.
 
 ```text
-For simple use:
-  Put final JPGs directly into one Drive folder.
+Google Sites:
+  Share -> Restricted -> add client email(s)
 
-For more advanced use:
-  Keep originals in Drive and adjust THUMBNAIL_SIZE in the script.
-```
-
-Good thumbnail values:
-
-```text
-w1200 = faster, still good quality
-w1600 = recommended balance
-w2000 = sharper, heavier
-```
-
----
-
-## Permission Layers
-
-There are three separate permission layers:
-
-```text
-1. Google Drive folder and files
-2. Google Apps Script web app
-3. Google Sites page
-```
-
-They are separate. Restricting the Google Site does not automatically restrict the Apps Script web app URL or the Drive files.
-
-### Easiest public or semi-public setup
-
-Use this for public event galleries or convenient client links:
-
-```text
 Google Drive folder:
-  Anyone with the link -> Viewer
+  Share -> Anyone with the link -> Viewer
+  Downloads allowed
 
-Google Apps Script deployment:
-  Execute as: Me
+Apps Script deployment:
+  Execute as: User accessing the web app
   Who has access: Anyone
-
-Google Sites:
-  Public or available to anyone with the site link
 ```
 
-This gives the smoothest experience. Visitors do not need to sign in or approve the script.
+**How it works:** Only people you share the Site with can reach the embedded gallery. The script runs under their Google account. Since Drive is link-shared, the gallery loads without extra permissions.
 
-Privacy level: low to medium. Anyone who gets the Drive file links or web app link can access the images.
+**Trade-off:** Visitors see a one-time Google authorization prompt the first time they open the gallery. This is normal for Apps Script running as the user.
 
-### More private client setup
+**Why this is flexible:** If you later want to restrict Drive access to specific people, you can change the Drive folder to Restricted and add emails — without touching the script or redeploying.
 
-Use this for private shoots:
+### Option B: Email-Permission Access
+
+Every layer is locked to specific email addresses. Most restrictive option.
 
 ```text
+Google Sites:
+  Share -> Restricted -> add client email(s)
+
 Google Drive folder:
-  Restricted -> add client email -> Viewer
+  Share -> Restricted -> add the same client email(s) -> Viewer
+  Downloads allowed
 
-Google Apps Script deployment:
-  Execute as: Me
-  Who has access: Anyone with Google account or Anyone
-
-Google Sites:
-  Restricted -> add client email
+Apps Script deployment:
+  Execute as: User accessing the web app
+  Who has access: Anyone with a Google account
 ```
 
-This is more private, but clients may need to log in with the correct Google account.
+**How it works:** The Site is restricted, the Drive folder is restricted, and the script runs as the visiting user. Each visitor must have explicit Viewer access to the Drive folder or previews and downloads will fail.
 
-### Should the script run as the user?
+**Trade-off:** You must add each client's email to both the Site and the Drive folder. If you miss one, that client gets a broken gallery. More admin work per client, but maximum control.
 
-It can, but it is not recommended for a client gallery.
+**When to use this:** Private shoots, sensitive content, or when you want a full audit trail of who accessed what.
 
-```text
-Execute as: User accessing the web app
-```
+### Summary
 
-This can cause visitors to see Google authorization or unverified-app warnings. For a clean photography gallery experience, use:
-
-```text
-Execute as: Me
-```
-
-Then you approve the script once, and visitors simply use the gallery.
+| Setting                      | Option A (Site-Gated) | Option B (Email-Permission) |
+| ---------------------------- | --------------------- | --------------------------- |
+| Google Sites access          | Restricted + emails   | Restricted + emails         |
+| Drive folder access          | Anyone with link      | Restricted + same emails    |
+| Apps Script "Execute as"     | User accessing        | User accessing              |
+| Apps Script "Who has access" | Anyone                | Anyone with Google account  |
+| Auth prompt for visitors     | Yes (once)            | Yes (once)                  |
+| Can tighten Drive later      | Yes, no redeploy      | Already tight               |
+| Admin work per client        | Low                   | Medium                      |
 
 ---
 
-## Drive Folder Setup
+## Setup
+
+### 1. Drive Folder
 
 1. Create a folder in Google Drive.
-2. Put your final image files into it.
-3. Open the folder.
-4. Copy the folder ID from the URL.
-
-Example folder URL:
+2. Add your final image files.
+3. Copy the folder ID from the URL:
 
 ```text
 https://drive.google.com/drive/folders/1ABCxyzFolderIdExample
+                                        └── this is the folder ID
 ```
 
-Folder ID:
+4. Set sharing permissions according to your chosen security option above.
+
+### 2. Apps Script
+
+1. Go to [script.google.com](https://script.google.com).
+2. Create a new project and rename it (e.g. "Photo Gallery Web App").
+3. Delete the default code.
+4. Paste the full script from the next section.
+5. Replace `PASTE_YOUR_DRIVE_FOLDER_ID_HERE` with your folder ID.
+6. Save.
+7. Run once and approve the permission prompt.
+
+The "unverified app" warning is normal for personal Apps Script projects. Click Advanced → Go to project → Allow.
+
+### 3. Deploy
+
+1. Click Deploy → New deployment → Web app.
+2. Set "Execute as" and "Who has access" per your security option.
+3. Deploy and copy the Web app URL.
+
+To update after code changes:
 
 ```text
-1ABCxyzFolderIdExample
+Deploy -> Manage deployments -> Edit -> Version -> New version -> Deploy
 ```
 
-Paste this ID into the script here:
+### 4. Embed in Google Sites
 
-```javascript
-FOLDER_ID: "PASTE_YOUR_DRIVE_FOLDER_ID_HERE"
-```
-
----
-
-## Google Drive Sharing Setup
-
-### Public or link-only gallery
-
-1. Right-click the Drive folder.
-2. Click Share.
-3. Under General access, choose Anyone with the link.
-4. Set the role to Viewer.
-5. Make sure downloads are allowed.
-
-Use this if the gallery does not contain sensitive/private images.
-
-### Private gallery
-
-1. Right-click the Drive folder.
-2. Click Share.
-3. Keep General access as Restricted.
-4. Add the client's email address.
-5. Set the role to Viewer.
-6. Make sure downloads are allowed.
-
-Use this if only specific clients should access the photos.
-
----
-
-## Apps Script Setup
-
-1. Go to script.google.com.
-2. Create a new project.
-3. Rename the project, for example:
-
-```text
-Photo Gallery Web App
-```
-
-4. Delete the default code.
-5. Paste the full script from the next section.
-6. Replace the folder ID.
-7. Save the project.
-8. Run or deploy it and approve the permission prompt.
-
-The Google warning saying the app is unverified is normal for your own Apps Script project. If you created the script yourself, click:
-
-```text
-Advanced -> Go to project -> Allow
-```
-
-Rename the project before approving so it does not say Untitled Project.
+1. Open your Google Site → Insert → Embed → By URL.
+2. Paste the Apps Script Web app URL.
+3. Resize the frame.
+4. Publish the Site.
+5. Share the Site with your client(s) per your security option.
 
 ---
 
@@ -962,247 +871,49 @@ function escapeHtml_(value) {
 
 ---
 
-## Deploy the Apps Script Web App
-
-1. Click Deploy.
-2. Click New deployment.
-3. Select Web app.
-4. Use these settings for the easiest gallery:
-
-```text
-Execute as: Me
-Who has access: Anyone
-```
-
-5. Click Deploy.
-6. Approve the permissions.
-7. Copy the Web app URL.
-
-If you edit the script later, deploy a new version:
-
-```text
-Deploy -> Manage deployments -> Edit -> Version -> New version -> Deploy
-```
-
-If you do not deploy a new version, Google Sites may still show the old version.
-
----
-
-## Embed in Google Sites
-
-1. Open your Google Site.
-2. Go to the page where the gallery should appear.
-3. Click Insert.
-4. Click Embed.
-5. Choose By URL.
-6. Paste the Apps Script Web app URL.
-7. Insert it.
-8. Resize the embedded frame.
-9. Publish the Google Site.
-
----
-
 ## Customization
 
-### Change the title and subtitle
+All options are in the `CONFIG` object at the top of the script.
 
-Edit this in the CONFIG block:
+| Setting                       | Values / Notes                                      |
+| ----------------------------- | --------------------------------------------------- |
+| `GALLERY_TITLE`               | Text in the toolbar                                 |
+| `GALLERY_SUBTITLE`            | Secondary text in the toolbar                       |
+| `INCLUDE_SUBFOLDERS`          | `false` (default) or `true`                         |
+| `THUMBNAIL_SIZE`              | `"w1200"`, `"w1600"` (default), `"w2000"`           |
+| `SORT_BY`                     | `"name"` (default), `"newest"`, `"oldest"`          |
+| `SHOW_OPEN_BUTTON`            | `false` (default) or `true` — hover Open button     |
+| `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true` (default) or `false` — hover Download button |
+| `SHOW_SELECT_ALL_BUTTON`      | `true` (default) or `false`                         |
+| `DOWNLOAD_DELAY_MS`           | Delay between downloads, default `650`              |
 
-```javascript
-GALLERY_TITLE: "Client Gallery",
-GALLERY_SUBTITLE: "Select images to download originals",
-```
-
-### Include images from subfolders
-
-Change this:
-
-```javascript
-INCLUDE_SUBFOLDERS: false,
-```
-
-To this:
-
-```javascript
-INCLUDE_SUBFOLDERS: true,
-```
-
-### Change sorting
-
-Use one of these:
-
-```javascript
-SORT_BY: "name"
-SORT_BY: "newest"
-SORT_BY: "oldest"
-```
-
-### Show or hide the single-image Download button
-
-The current premium version shows a small Download button on hover:
-
-```javascript
-SHOW_SINGLE_DOWNLOAD_BUTTON: true,
-```
-
-To hide it and only allow selected downloads:
-
-```javascript
-SHOW_SINGLE_DOWNLOAD_BUTTON: false,
-```
-
-### Show or hide the Open button
-
-The cleanest version hides the Open button:
-
-```javascript
-SHOW_OPEN_BUTTON: false,
-```
-
-To show an Open button on hover:
-
-```javascript
-SHOW_OPEN_BUTTON: true,
-```
-
-### Change gallery image shape
-
-Find this CSS:
+To change the image card shape, edit this CSS in the script:
 
 ```css
-aspect-ratio: 4 / 5;
-```
-
-Good alternatives:
-
-```css
-aspect-ratio: 1 / 1;
-aspect-ratio: 3 / 4;
-aspect-ratio: 4 / 5;
-aspect-ratio: 16 / 10;
-```
-
-For a high-end portrait gallery, keep:
-
-```css
-aspect-ratio: 4 / 5;
+aspect-ratio: 4 / 5;   /* portrait, default */
+aspect-ratio: 1 / 1;   /* square */
+aspect-ratio: 3 / 4;   /* taller portrait */
+aspect-ratio: 16 / 10; /* landscape */
 ```
 
 ---
 
-## How Downloads Work
+## Downloads
 
-Each card has a direct Drive download URL:
+Each selected image downloads via a direct Drive URL. Limitations:
 
-```text
-https://drive.google.com/uc?export=download&id=FILE_ID
-```
-
-When the user clicks Download selected, the script starts one download per selected file.
-
-Limitations:
-
-- It does not create one combined ZIP automatically.
-- Browsers may ask the user to allow multiple downloads.
-- Very large files may open a Google Drive confirmation page instead of downloading immediately.
-
-For a single ZIP workflow, manually create a ZIP file in Drive and add a separate button to it.
+- No automatic ZIP — each file downloads individually.
+- Browsers may ask to allow multiple downloads.
+- Very large files may show a Drive confirmation page.
 
 ---
 
 ## Troubleshooting
 
-### The gallery shows no images
-
-Check:
-
-- The folder ID is correct.
-- The folder contains actual image files.
-- The files are in the main folder, unless INCLUDE_SUBFOLDERS is true.
-- You deployed the latest script version.
-
-### Images do not load
-
-Check:
-
-- Drive folder permissions allow the visitor to view the images.
-- For public galleries, use Anyone with the link -> Viewer.
-- For private galleries, add the exact client email.
-
-### Download does not work
-
-Check:
-
-- The user has Viewer access to the file.
-- Drive download/print/copy restrictions are not disabled.
-- The file is not too large for direct Drive download behavior.
-- The browser is not blocking multiple downloads.
-
-### I still see the old design
-
-You probably changed the code but did not deploy a new version.
-
-Do this:
-
-```text
-Deploy -> Manage deployments -> Edit -> Version -> New version -> Deploy
-```
-
-Then refresh the Google Site.
-
-### Clients see an authorization warning
-
-Make sure the deployment is not set to Execute as user.
-
-Use:
-
-```text
-Execute as: Me
-Who has access: Anyone
-```
-
-Then only you approve the script permissions.
-
----
-
-## Best Final Setup
-
-For the smoothest clean gallery:
-
-```text
-Google Drive folder:
-  Anyone with the link -> Viewer
-
-Apps Script:
-  Execute as: Me
-  Access: Anyone
-
-Google Sites:
-  Public or shared link
-
-Gallery style:
-  No visible filenames
-  Selector on image
-  Hover download button
-  Download selected button
-```
-
-For private galleries:
-
-```text
-Google Drive folder:
-  Restricted -> add client email -> Viewer
-
-Google Sites:
-  Restricted -> add client email
-
-Apps Script:
-  Execute as: Me
-  Access: Anyone or Anyone with Google account
-```
-
-The most important rule is:
-
-```text
-If a visitor cannot access the Drive file, the preview/download will fail.
-```
+| Problem                  | Check                                                                   |
+| ------------------------ | ----------------------------------------------------------------------- |
+| Gallery shows no images  | Folder ID is correct; folder has image files; latest version deployed   |
+| Images do not load       | Drive sharing allows the visitor to view the files                      |
+| Downloads fail           | Visitor has Viewer access; downloads not disabled in Drive              |
+| Old design still showing | Deploy a new version (Deploy → Manage deployments → Edit → New version) |
+| Authorization warning    | Normal on first visit when script runs as the user                      |
