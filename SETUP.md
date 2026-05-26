@@ -2,9 +2,9 @@
 
 ## Quick Start
 
-1. Deploy the script once.
-2. For each client, use the same URL with a different `?folder=` parameter.
-3. Embed that URL in their Google Site.
+1. Deploy the script once → you get a **Web App URL**.
+2. For each client, combine that URL with their Drive folder ID.
+3. Embed the combined URL in their Google Site.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ---
 
-## Step 2: Deploy
+## Step 2: Deploy and Get Your Web App URL
 
 1. Click **Deploy → New deployment**.
 2. Click the gear icon → **Web app**.
@@ -27,37 +27,51 @@
    - **Execute as:** User accessing the web app
    - **Who has access:** Anyone
 4. Click **Deploy**.
-5. Copy the **Web app URL**. It looks like:
-   ```
-   https://script.google.com/macros/s/AKfycb.../exec
-   ```
+5. A dialog appears with your **Web App URL**. Copy it and save it somewhere.
 
-> You only deploy once. The same URL works for all clients.
+Your Web App URL looks like this:
+
+```
+https://script.google.com/macros/s/AKfycbzuLD-9zLIO.../exec
+```
+
+> This URL never changes. You use it for every client.
 
 ---
 
-## Step 3: Get a Folder ID
+## Step 3: Get a Client's Folder ID
 
-For each client gallery, you need a Google Drive folder ID.
+1. Upload the client's photos to a Google Drive folder.
+2. Open that folder in Drive.
+3. Look at the browser address bar:
 
-1. Open the Drive folder containing the client's images.
-2. Copy the ID from the URL:
-   ```
-   https://drive.google.com/drive/folders/1ABCxyz123FolderID
-                                           └── this part
-   ```
+```
+https://drive.google.com/drive/folders/14BjHKjxtRnbmhGh6FUra5EnhDyO0ks6G
+```
+
+4. The folder ID is the long string after `/folders/`:
+
+```
+14BjHKjxtRnbmhGh6FUra5EnhDyO0ks6G
+```
 
 ---
 
-## Step 4: Build the Gallery URL
+## Step 4: Combine Into a Gallery URL
 
-Append `?folder=` to your web app URL:
+Take your Web App URL and add `?folder=` followed by the folder ID:
 
 ```
-https://script.google.com/macros/s/AKfycb.../exec?folder=1ABCxyz123FolderID
+[Your Web App URL]?folder=[Folder ID]
 ```
 
-Test it by opening this URL in your browser. You should see the gallery.
+**Example:**
+
+```
+https://script.google.com/macros/s/AKfycbzuLD-9zLIO.../exec?folder=14BjHKjxtRnbmhGh6FUra5EnhDyO0ks6G
+```
+
+Open this URL in your browser to test. You should see the photo gallery.
 
 ---
 
@@ -65,26 +79,23 @@ Test it by opening this URL in your browser. You should see the gallery.
 
 1. Open your Google Site in edit mode.
 2. **Insert → Embed → By URL**.
-3. Paste the full URL (with `?folder=...`).
+3. Paste the full gallery URL from Step 4.
 4. Resize the embed frame to fill the page.
 5. Publish the site.
 
 ---
 
-## Using One App for Multiple Clients
+## Multiple Clients
 
-Each client gets their own:
-- Google Drive folder (with their photos)
-- Google Site (or page within a site)
-- Embed URL with their folder ID
+You reuse the same Web App URL every time. Only the folder ID changes.
 
-| Client  | Folder ID | Embed URL                 |
-| ------- | --------- | ------------------------- |
-| Alice   | `1AAA...` | `.../exec?folder=1AAA...` |
-| Bob     | `1BBB...` | `.../exec?folder=1BBB...` |
-| Charlie | `1CCC...` | `.../exec?folder=1CCC...` |
+| Client  | Their Folder ID | Their Gallery URL                                   |
+| ------- | --------------- | --------------------------------------------------- |
+| Alice   | `1AAA...`       | `https://script.google.com/.../exec?folder=1AAA...` |
+| Bob     | `1BBB...`       | `https://script.google.com/.../exec?folder=1BBB...` |
+| Charlie | `1CCC...`       | `https://script.google.com/.../exec?folder=1CCC...` |
 
-None of your personal data is in the app. Each client only sees photos from their own folder.
+Each client only sees photos from their own folder. None of your personal data is involved.
 
 ---
 
@@ -133,11 +144,11 @@ These are at the top of the script. Adjust to taste:
 
 | Setting                       | Default              | Description                                  |
 | ----------------------------- | -------------------- | -------------------------------------------- |
-| `FOLDER_ID`                   | `""`                 | Fallback folder if no `?folder=` param       |
-| `GALLERY_TITLE`               | `"Client Gallery"`   | Title in the toolbar                         |
-| `GALLERY_SUBTITLE`            | `"Select images..."` | Subtitle text                                |
+| `FOLDER_ID`                   | `""`                 | Fallback folder if no `?folder=` in the URL  |
+| `GALLERY_TITLE`               | `"Client Gallery"`   | Title shown in the toolbar                   |
+| `GALLERY_SUBTITLE`            | `"Select images..."` | Subtitle below the title                     |
 | `INCLUDE_SUBFOLDERS`          | `false`              | Also scan subfolders for images              |
-| `THUMBNAIL_SIZE`              | `"w1600"`            | Preview quality (`w1000`–`w2000`)            |
+| `THUMBNAIL_SIZE`              | `"w800"`             | Gallery preview quality (`w600`–`w1600`)     |
 | `SORT_BY`                     | `"name"`             | Sort order: `"name"`, `"newest"`, `"oldest"` |
 | `SHOW_OPEN_BUTTON`            | `false`              | Show "Open in Drive" button on hover         |
 | `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true`               | Show download button on each photo           |

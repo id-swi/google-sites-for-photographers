@@ -30,8 +30,9 @@ const CONFIG = {
   INCLUDE_SUBFOLDERS: false,
 
   // Thumbnail size used for the gallery preview.
-  // Good values: w1000, w1200, w1600, w2000.
-  THUMBNAIL_SIZE: "w1600",
+  // Good values: w600, w800, w1000, w1200, w1600.
+  // w1200 gives sharp thumbnails on all screens.
+  THUMBNAIL_SIZE: "w1200",
 
   // Sorting: "name", "newest", or "oldest".
   SORT_BY: "name",
@@ -170,6 +171,8 @@ function buildGalleryHtml_(photos, folderId) {
     body {
       margin: 0;
       padding: 0;
+      width: 100%;
+      height: 100%;
       background: var(--bg);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -178,10 +181,11 @@ function buildGalleryHtml_(photos, folderId) {
 
     body {
       padding: 24px;
+      min-height: 100%;
     }
 
     .shell {
-      max-width: 1400px;
+      max-width: 100%;
       margin: 0 auto;
     }
 
@@ -1051,7 +1055,7 @@ function buildGalleryHtml_(photos, folderId) {
     }
 
     function _lbThumbUrl(fileId) {
-      return "https://drive.google.com/thumbnail?id=" + encodeURIComponent(fileId) + "&sz=w2400";
+      return "https://drive.google.com/thumbnail?id=" + encodeURIComponent(fileId) + "&sz=w1600";
     }
 
     function _preloadLightbox(cards, index) {
