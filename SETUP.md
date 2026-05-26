@@ -1,5 +1,12 @@
 # Photo Gallery Web App — Setup Instructions
 
+This guide covers both gallery variants:
+
+- **Full gallery** (`photo-gallery-webapp-code.gs`) — clients can select and download photos
+- **View-only gallery** (`photo-gallery-webapp-viewonly.gs`) — clients can browse and preview, no downloads
+
+The setup steps are identical. Just use the file that matches your use case.
+
 ## Quick Start
 
 1. Deploy the script once → you get a **Web App URL**.
@@ -14,7 +21,7 @@
 2. Click **New project**.
 3. Rename it (e.g. "Photo Gallery").
 4. Delete the default code in `Code.gs`.
-5. Paste the entire contents of `photo-gallery-webapp-code.gs`.
+5. Paste the entire contents of `photo-gallery-webapp-code.gs` (or `photo-gallery-webapp-viewonly.gs` for view-only).
 6. Save (Ctrl+S).
 
 ---
@@ -140,30 +147,45 @@ All existing embed URLs continue to work with the updated code.
 
 ## CONFIG Options
 
+### Shared settings (both variants)
+
 These are at the top of the script. Adjust to taste:
 
-| Setting                       | Default              | Description                                  |
-| ----------------------------- | -------------------- | -------------------------------------------- |
-| `FOLDER_ID`                   | `""`                 | Fallback folder if no `?folder=` in the URL  |
-| `GALLERY_TITLE`               | `"Client Gallery"`   | Title shown in the toolbar                   |
-| `GALLERY_SUBTITLE`            | `"Select images..."` | Subtitle below the title                     |
-| `INCLUDE_SUBFOLDERS`          | `false`              | Also scan subfolders for images              |
-| `THUMBNAIL_SIZE`              | `"w800"`             | Gallery preview quality (`w600`–`w1600`)     |
-| `SORT_BY`                     | `"name"`             | Sort order: `"name"`, `"newest"`, `"oldest"` |
-| `SHOW_OPEN_BUTTON`            | `false`              | Show "Open in Drive" button on hover         |
-| `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true`               | Show download button on each photo           |
-| `SHOW_SELECT_ALL_BUTTON`      | `true`               | Show "Select all" in toolbar                 |
+| Setting              | Default              | Description                                  |
+| -------------------- | -------------------- | -------------------------------------------- |
+| `FOLDER_ID`          | `""`                 | Fallback folder if no `?folder=` in the URL  |
+| `GALLERY_TITLE`      | `"Client Gallery"`   | Title shown in the toolbar                   |
+| `GALLERY_SUBTITLE`   | `"Select images..."` | Subtitle below the title                     |
+| `INCLUDE_SUBFOLDERS` | `false`              | Also scan subfolders for images              |
+| `THUMBNAIL_SIZE`     | `"w800"`             | Gallery preview quality (`w600`–`w1600`)     |
+| `SORT_BY`            | `"name"`             | Sort order: `"name"`, `"newest"`, `"oldest"` |
+
+### Full gallery only
+
+These settings only exist in `photo-gallery-webapp-code.gs`:
+
+| Setting                       | Default | Description                           |
+| ----------------------------- | ------- | ------------------------------------- |
+| `SHOW_OPEN_BUTTON`            | `false` | Show "Open in Drive" button on hover  |
+| `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true`  | Show download button on each photo    |
+| `SHOW_SELECT_ALL_BUTTON`      | `true`  | Show "Select all" in toolbar          |
+| `DOWNLOAD_DELAY_MS`           | `650`   | Delay between selected downloads (ms) |
 
 ---
 
 ## Features
 
+### Both variants
+
 - **Lightbox preview** — click any photo for a large view with arrow navigation
 - **Keyboard shortcuts** — Left/Right arrows to navigate, Escape to close
-- **Single download** — download icon in lightbox, or hover button on each card
-- **Bulk download** — select multiple → downloads as a ZIP file
 - **Preloading** — adjacent images load in background for fast navigation
 - **Responsive** — works on desktop, tablet, and mobile
+
+### Full gallery only
+
+- **Single download** — download icon in lightbox, or hover button on each card
+- **Bulk download** — select multiple → downloads as a ZIP file
 
 ---
 

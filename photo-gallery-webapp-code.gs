@@ -180,7 +180,7 @@ function buildGalleryHtml_(photos, folderId) {
     }
 
     body {
-      padding: 24px;
+      padding: 24px 48px;
       min-height: 100%;
     }
 

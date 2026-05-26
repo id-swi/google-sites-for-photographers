@@ -12,6 +12,11 @@ When you add images to the Drive folder, the gallery updates automatically. No m
 
 Gallery features: no visible filenames, checkbox selectors on each image, sticky toolbar, hover download controls, bulk ZIP download, lightbox preview with navigation, responsive layout.
 
+Two variants are available:
+
+- **Full gallery** (`photo-gallery-webapp-code.gs`) — includes all of the above
+- **View-only gallery** (`photo-gallery-webapp-viewonly.gs`) — gallery grid and lightbox only, no selection or downloads
+
 ---
 
 ## Architecture
@@ -176,7 +181,7 @@ https://drive.google.com/drive/folders/1ABCxyzFolderIdExample
 1. Go to [script.google.com](https://script.google.com).
 2. Create a new project and rename it (e.g. "Photo Gallery Web App").
 3. Delete the default code.
-4. Paste the contents of `photo-gallery-webapp-code.gs`.
+4. Paste the contents of `photo-gallery-webapp-code.gs` (or `photo-gallery-webapp-viewonly.gs` for the view-only variant).
 5. Save.
 6. Run once and approve the permission prompt.
 
@@ -207,19 +212,27 @@ Deploy -> Manage deployments -> Edit -> Version -> New version -> Deploy
 
 ## Customization
 
-All options are in the `CONFIG` object at the top of `photo-gallery-webapp-code.gs`.
+All options are in the `CONFIG` object at the top of each `.gs` file.
+
+Shared settings (both variants):
+
+| Setting              | Values / Notes                                     |
+| -------------------- | -------------------------------------------------- |
+| `FOLDER_ID`          | Fallback folder ID if no `?folder=` in URL         |
+| `GALLERY_TITLE`      | Text in the toolbar                                |
+| `GALLERY_SUBTITLE`   | Secondary text in the toolbar                      |
+| `INCLUDE_SUBFOLDERS` | `false` (default) or `true`                        |
+| `THUMBNAIL_SIZE`     | `"w600"`, `"w800"` (default), `"w1000"`, `"w1600"` |
+| `SORT_BY`            | `"name"` (default), `"newest"`, `"oldest"`         |
+
+Full gallery only (`photo-gallery-webapp-code.gs`):
 
 | Setting                       | Values / Notes                                      |
 | ----------------------------- | --------------------------------------------------- |
-| `FOLDER_ID`                   | Fallback folder ID if no `?folder=` in URL          |
-| `GALLERY_TITLE`               | Text in the toolbar                                 |
-| `GALLERY_SUBTITLE`            | Secondary text in the toolbar                       |
-| `INCLUDE_SUBFOLDERS`          | `false` (default) or `true`                         |
-| `THUMBNAIL_SIZE`              | `"w600"`, `"w800"` (default), `"w1000"`, `"w1600"`  |
-| `SORT_BY`                     | `"name"` (default), `"newest"`, `"oldest"`          |
 | `SHOW_OPEN_BUTTON`            | `false` (default) or `true` — hover Open button     |
 | `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true` (default) or `false` — hover Download button |
 | `SHOW_SELECT_ALL_BUTTON`      | `true` (default) or `false`                         |
+| `DOWNLOAD_DELAY_MS`           | `650` (default) — delay between bulk downloads      |
 
 ---
 
