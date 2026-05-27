@@ -23,7 +23,7 @@ When making changes to gallery functionality (layout, styling, lightbox, thumbna
 The view-only variant is a subset of the full variant. It shares the same gallery grid, lightbox, CSS, and server-side folder/image logic. The only differences are:
 
 - **No selection UI** (no checkboxes, no selection count, no select/clear buttons)
-- **No download functionality** (no download buttons, no ZIP builder, no `getDriveToken()`, no `getFileBase64()`, no download progress bar)
+- **No download functionality** (no download buttons, no ZIP builder, no `getFileBase64()`, no download progress bar)
 - **No download URLs** in the photo data (no `downloadUrl` or `viewUrl` — only `previewUrl`)
 - **Simpler toolbar** (title + photo count instead of selection controls)
 
@@ -41,7 +41,7 @@ Apply the change to both files. Shared code includes:
 
 Only edit `photo-gallery-webapp-code.gs`. This includes:
 
-- `getFileBase64()`, `getDriveToken()`
+- `getFileBase64()`, `isFileInGalleryFolder_()`, `signFolderId_()`, `getHmacKey_()`
 - Selection JS (`updateSelection`, `selectAllPhotos`, `clearSelection`)
 - Download JS (`downloadSelected`, `downloadSingle`, `downloadLightboxPhoto`, ZIP builder)
 - Download progress UI

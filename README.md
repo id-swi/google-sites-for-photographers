@@ -31,7 +31,7 @@ Two variants are included:
 Google Site → embeds Apps Script web app → reads images from Google Drive folder
 ```
 
-The web app generates a gallery from any Drive folder. Thumbnails load from Drive's CDN. Downloads use either direct Drive URLs (single file) or the Drive REST API with client-side ZIP packaging (bulk).
+The web app generates a gallery from any Drive folder. Thumbnails load from Drive's CDN. Downloads are fetched server-side and delivered as blob downloads (single) or a client-side ZIP (bulk). No OAuth token is ever exposed to client JavaScript.
 
 See [google-sites-drive-photo-gallery-guide.md](google-sites-drive-photo-gallery-guide.md) for the full architecture diagram.
 
@@ -46,12 +46,13 @@ See [SETUP.md](SETUP.md) for detailed step-by-step instructions.
 
 ## Files
 
-| File                                        | Description                                             |
-| ------------------------------------------- | ------------------------------------------------------- |
-| `photo-gallery-webapp-code.gs`              | Full gallery with selection and downloads               |
-| `photo-gallery-webapp-viewonly.gs`          | View-only gallery — browse and lightbox, no downloads   |
-| `SETUP.md`                                  | Step-by-step setup and deployment instructions          |
-| `google-sites-drive-photo-gallery-guide.md` | Architecture, security options, and customization guide |
+| File                                        | Description                                              |
+| ------------------------------------------- | -------------------------------------------------------- |
+| `photo-gallery-webapp-code.gs`              | Full gallery with selection and downloads                |
+| `photo-gallery-webapp-viewonly.gs`          | View-only gallery — browse and lightbox, no downloads    |
+| `appsscript.json`                           | Manifest with `drive.readonly` scope (paste into editor) |
+| `SETUP.md`                                  | Step-by-step setup and deployment instructions           |
+| `google-sites-drive-photo-gallery-guide.md` | Architecture, security options, and customization guide  |
 
 ## Configuration
 
@@ -72,9 +73,10 @@ See [SETUP.md](SETUP.md) for the full config reference.
 
 ## Security
 
-- Runs as the visiting user's Google account — no shared credentials
+- Runs as the script owner — visitors never see a login prompt
+- No OAuth token or credential is ever sent to client-side JavaScript
+- Downloads are HMAC-signed — the client can only access files from the folder the server rendered
 - Each client only sees the Drive folder linked in their embed URL
-- Drive permissions control file access independently
 - IDOR protection on server-side file validation (full gallery)
 - View-only variant exposes no download URLs or tokens
 

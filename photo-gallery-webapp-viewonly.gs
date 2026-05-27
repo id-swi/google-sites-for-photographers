@@ -22,6 +22,14 @@ const CONFIG = {
   // Optional fallback folder ID. If empty, the ?folder= URL parameter is required.
   FOLDER_ID: "",
 
+  // Dynamic mode: list every folder ID you want to serve galleries for.
+  // Only these folders will be accepted via ?folder=X&sig=Y URLs.
+  // Run generateGalleryLinks() from the script editor to get signed URLs.
+  ALLOWED_FOLDERS: [
+    // "folder-id-1",
+    // "folder-id-2",
+  ],
+
   // Text shown in the clean top toolbar.
   GALLERY_TITLE: "Gallery",
   GALLERY_SUBTITLE: "Browse photos",
@@ -39,13 +47,46 @@ const CONFIG = {
 };
 
 function doGet(e) {
-  const folderId = (e && e.parameter && e.parameter.folder) || CONFIG.FOLDER_ID;
+  var folderId;
 
-  if (!folderId) {
-    return HtmlService.createHtmlOutput(
-      "<p style='font-family:sans-serif;padding:24px'>" +
-        "No folder specified. Add <code>?folder=YOUR_FOLDER_ID</code> to the URL.</p>",
-    ).setTitle("Gallery");
+  if (CONFIG.FOLDER_ID) {
+    // Hardcoded folder — ignore URL parameter to prevent IDOR.
+    folderId = CONFIG.FOLDER_ID;
+  } else {
+    // Dynamic mode — require a signed URL (?folder=X&sig=Y).
+    var paramFolder = e && e.parameter && e.parameter.folder;
+    var paramSig = e && e.parameter && e.parameter.sig;
+
+    if (!paramFolder) {
+      return HtmlService.createHtmlOutput(
+        "<p style='font-family:sans-serif;padding:24px'>" +
+          "No folder specified.</p>",
+      ).setTitle("Gallery");
+    }
+
+    // Verify folder is in the allowlist.
+    if (CONFIG.ALLOWED_FOLDERS.length > 0) {
+      if (CONFIG.ALLOWED_FOLDERS.indexOf(paramFolder) === -1) {
+        return HtmlService.createHtmlOutput(
+          "<p style='font-family:sans-serif;padding:24px'>" +
+            "Access denied.</p>",
+        ).setTitle("Gallery");
+      }
+      // Allowlist is the security boundary — no signature needed.
+    } else {
+      // No allowlist — require a signed URL (?folder=X&sig=Y).
+      if (
+        !paramSig ||
+        !constantTimeEqual_(signFolderId_(paramFolder), paramSig)
+      ) {
+        return HtmlService.createHtmlOutput(
+          "<p style='font-family:sans-serif;padding:24px'>" +
+            "Invalid or missing gallery signature.</p>",
+        ).setTitle("Gallery");
+      }
+    }
+
+    folderId = paramFolder;
   }
 
   const html = buildGalleryHtml_(getPhotosFromDriveFolder_(folderId));
@@ -53,6 +94,32 @@ function doGet(e) {
   return HtmlService.createHtmlOutput(html)
     .setTitle(CONFIG.GALLERY_TITLE)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Run this from the script editor to generate signed URLs for all ALLOWED_FOLDERS.
+ * Safe to be client-visible — it takes no parameters and only uses the allowlist.
+ */
+function generateGalleryLinks() {
+  var folders = CONFIG.ALLOWED_FOLDERS;
+  if (!folders || folders.length === 0) {
+    Logger.log(
+      "No folders in CONFIG.ALLOWED_FOLDERS. Add folder IDs there first.",
+    );
+    return;
+  }
+  var deployUrl = ScriptApp.getService().getUrl();
+  Logger.log("=== Signed Gallery URLs ===");
+  for (var i = 0; i < folders.length; i++) {
+    var sig = signFolderId_(folders[i]);
+    var url =
+      deployUrl +
+      "?folder=" +
+      encodeURIComponent(folders[i]) +
+      "&sig=" +
+      encodeURIComponent(sig);
+    Logger.log(url);
+  }
 }
 
 function getPhotosFromDriveFolder_(folderId) {
@@ -92,6 +159,33 @@ function collectImagesFromFolder_(folder, photos) {
       collectImagesFromFolder_(folders.next(), photos);
     }
   }
+}
+
+// --- Folder ID signing (HMAC) ---
+// Used to validate ?folder= URL parameter in dynamic mode.
+
+function getHmacKey_() {
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty("GALLERY_HMAC_KEY");
+  if (!key) {
+    key = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty("GALLERY_HMAC_KEY", key);
+  }
+  return key;
+}
+
+function signFolderId_(folderId) {
+  var sig = Utilities.computeHmacSha256Signature(folderId, getHmacKey_());
+  return Utilities.base64EncodeWebSafe(sig);
+}
+
+function constantTimeEqual_(a, b) {
+  if (a.length !== b.length) return false;
+  var result = 0;
+  for (var i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 function sortPhotos_(photos) {

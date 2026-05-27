@@ -13,7 +13,7 @@
  * 1. Replace FOLDER_ID below with your Google Drive folder ID.
  * 2. Deploy as Web app.
  * 3. Recommended deployment:
- *    - Execute as: User accessing the web app
+ *    - Execute as: Me
  *    - Who has access: Anyone
  * 4. Embed the Web app URL into Google Sites.
  *******************************************************/
@@ -21,6 +21,14 @@
 const CONFIG = {
   // Optional fallback folder ID. If empty, the ?folder= URL parameter is required.
   FOLDER_ID: "",
+
+  // Dynamic mode: list every folder ID you want to serve galleries for.
+  // Only these folders will be accepted via ?folder=X&sig=Y URLs.
+  // Run generateGalleryLinks() from the script editor to get signed URLs.
+  ALLOWED_FOLDERS: [
+    // "folder-id-1",
+    // "folder-id-2",
+  ],
 
   // Text shown in the clean top toolbar.
   GALLERY_TITLE: "Client Gallery",
@@ -41,27 +49,86 @@ const CONFIG = {
   SHOW_OPEN_BUTTON: false,
   SHOW_SINGLE_DOWNLOAD_BUTTON: true,
   SHOW_SELECT_ALL_BUTTON: true,
-
-  // Delay between selected downloads, in milliseconds.
-  // This reduces browser blocking when many files are selected.
-  DOWNLOAD_DELAY_MS: 650,
 };
 
 function doGet(e) {
-  const folderId = (e && e.parameter && e.parameter.folder) || CONFIG.FOLDER_ID;
+  var folderId;
 
-  if (!folderId) {
-    return HtmlService.createHtmlOutput(
-      "<p style='font-family:sans-serif;padding:24px'>" +
-        "No folder specified. Add <code>?folder=YOUR_FOLDER_ID</code> to the URL.</p>",
-    ).setTitle("Gallery");
+  if (CONFIG.FOLDER_ID) {
+    // Hardcoded folder — ignore URL parameter to prevent IDOR.
+    folderId = CONFIG.FOLDER_ID;
+  } else {
+    // Dynamic mode — require a signed URL (?folder=X&sig=Y).
+    var paramFolder = e && e.parameter && e.parameter.folder;
+    var paramSig = e && e.parameter && e.parameter.sig;
+
+    if (!paramFolder) {
+      return HtmlService.createHtmlOutput(
+        "<p style='font-family:sans-serif;padding:24px'>" +
+          "No folder specified.</p>",
+      ).setTitle("Gallery");
+    }
+
+    // Verify folder is in the allowlist.
+    if (CONFIG.ALLOWED_FOLDERS.length > 0) {
+      if (CONFIG.ALLOWED_FOLDERS.indexOf(paramFolder) === -1) {
+        return HtmlService.createHtmlOutput(
+          "<p style='font-family:sans-serif;padding:24px'>" +
+            "Access denied.</p>",
+        ).setTitle("Gallery");
+      }
+      // Allowlist is the security boundary — no signature needed.
+    } else {
+      // No allowlist — require a signed URL (?folder=X&sig=Y).
+      if (
+        !paramSig ||
+        !constantTimeEqual_(signFolderId_(paramFolder), paramSig)
+      ) {
+        return HtmlService.createHtmlOutput(
+          "<p style='font-family:sans-serif;padding:24px'>" +
+            "Invalid or missing gallery signature.</p>",
+        ).setTitle("Gallery");
+      }
+    }
+
+    folderId = paramFolder;
   }
 
-  const html = buildGalleryHtml_(getPhotosFromDriveFolder_(folderId), folderId);
+  const html = buildGalleryHtml_(
+    getPhotosFromDriveFolder_(folderId),
+    folderId,
+    signFolderId_(folderId),
+  );
 
   return HtmlService.createHtmlOutput(html)
     .setTitle(CONFIG.GALLERY_TITLE)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * Run this from the script editor to generate signed URLs for all ALLOWED_FOLDERS.
+ * Safe to be client-visible — it takes no parameters and only uses the allowlist.
+ */
+function generateGalleryLinks() {
+  var folders = CONFIG.ALLOWED_FOLDERS;
+  if (!folders || folders.length === 0) {
+    Logger.log(
+      "No folders in CONFIG.ALLOWED_FOLDERS. Add folder IDs there first.",
+    );
+    return;
+  }
+  var deployUrl = ScriptApp.getService().getUrl();
+  Logger.log("=== Signed Gallery URLs ===");
+  for (var i = 0; i < folders.length; i++) {
+    var sig = signFolderId_(folders[i]);
+    var url =
+      deployUrl +
+      "?folder=" +
+      encodeURIComponent(folders[i]) +
+      "&sig=" +
+      encodeURIComponent(sig);
+    Logger.log(url);
+  }
 }
 
 function getPhotosFromDriveFolder_(folderId) {
@@ -92,8 +159,6 @@ function collectImagesFromFolder_(folder, photos) {
       viewUrl: file.getUrl(),
       previewUrl:
         "https://drive.google.com/thumbnail?id=" + encodedId + szParam,
-      downloadUrl:
-        "https://drive.google.com/uc?export=download&confirm=t&id=" + encodedId,
     });
   }
 
@@ -106,30 +171,83 @@ function collectImagesFromFolder_(folder, photos) {
   }
 }
 
-function getFileBase64(fileId, folderId) {
-  // Verify the file belongs to the specified gallery folder (prevents arbitrary file access)
-  var folder = folderId || CONFIG.FOLDER_ID;
-  var file = DriveApp.getFileById(fileId);
-  var parents = file.getParents();
-  var inGallery = false;
-  while (parents.hasNext()) {
-    if (parents.next().getId() === folder) {
-      inGallery = true;
-      break;
-    }
+function getFileBase64(fileId, folderId, folderSig) {
+  // Verify the folder signature to prevent IDOR — the client cannot forge a
+  // signature for a folder other than the one the server rendered the gallery for.
+  // Uses constant-time comparison to prevent timing attacks.
+  var expected = signFolderId_(folderId);
+  if (
+    !folderSig ||
+    expected.length !== folderSig.length ||
+    !constantTimeEqual_(expected, folderSig)
+  ) {
+    throw new Error("Access denied.");
   }
-  if (!inGallery) throw new Error("Access denied.");
+
+  var galleryFolderId = folderId || CONFIG.FOLDER_ID;
+  var file = DriveApp.getFileById(fileId);
+
+  if (!isFileInGalleryFolder_(file, galleryFolderId)) {
+    throw new Error("Access denied.");
+  }
+
+  // Only serve image files — prevent using the gallery as a proxy for other file types.
+  if (!file.getMimeType().match(/^image\//)) {
+    throw new Error("Access denied.");
+  }
+
   return {
     data: Utilities.base64Encode(file.getBlob().getBytes()),
     name: file.getName(),
   };
 }
 
-function getDriveToken() {
-  // Returns the current user's OAuth token for direct Drive API access.
-  // IMPORTANT: Only safe with "Execute as: User accessing the web app".
-  // Do NOT use with "Execute as: Me" — that would expose the owner's token.
-  return ScriptApp.getOAuthToken();
+function isFileInGalleryFolder_(file, galleryFolderId) {
+  var parents = file.getParents();
+  while (parents.hasNext()) {
+    var parent = parents.next();
+    if (parent.getId() === galleryFolderId) return true;
+    // If subfolders are enabled, walk up the tree to check ancestry
+    if (CONFIG.INCLUDE_SUBFOLDERS) {
+      var ancestor = parent;
+      for (var depth = 0; depth < 10; depth++) {
+        var grandparents = ancestor.getParents();
+        if (!grandparents.hasNext()) break;
+        ancestor = grandparents.next();
+        if (ancestor.getId() === galleryFolderId) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// --- Folder ID signing (HMAC) ---
+// Prevents IDOR: the client can only request files from the folder the server
+// rendered the gallery for. The HMAC key is auto-generated on first use and
+// stored in Script Properties.
+
+function getHmacKey_() {
+  var props = PropertiesService.getScriptProperties();
+  var key = props.getProperty("GALLERY_HMAC_KEY");
+  if (!key) {
+    key = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty("GALLERY_HMAC_KEY", key);
+  }
+  return key;
+}
+
+function signFolderId_(folderId) {
+  var sig = Utilities.computeHmacSha256Signature(folderId, getHmacKey_());
+  return Utilities.base64EncodeWebSafe(sig);
+}
+
+function constantTimeEqual_(a, b) {
+  if (a.length !== b.length) return false;
+  var result = 0;
+  for (var i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 function sortPhotos_(photos) {
@@ -146,7 +264,7 @@ function sortPhotos_(photos) {
   photos.sort(comparators[CONFIG.SORT_BY] || comparators.name);
 }
 
-function buildGalleryHtml_(photos, folderId) {
+function buildGalleryHtml_(photos, folderId, folderSig) {
   const photoCards = photos.map((photo) => buildPhotoCard_(photo)).join("\n");
 
   return `
@@ -722,7 +840,8 @@ function buildGalleryHtml_(photos, folderId) {
   </div>
 
   <script>
-    var GALLERY_FOLDER_ID = "${escapeHtml_(folderId)}";
+    var GALLERY_FOLDER_ID = ${JSON.stringify(folderId)};
+    var GALLERY_FOLDER_SIG = ${JSON.stringify(folderSig)};
 
     function updateSelection() {
       const cards = document.querySelectorAll(".card");
@@ -762,16 +881,21 @@ function buildGalleryHtml_(photos, folderId) {
       updateSelection();
     }
 
-    function triggerDirectDownload(url) {
-      // Use a link click to trigger download from Google Drive CDN.
-      // The Drive URL responds with Content-Disposition: attachment.
+    function triggerBlobDownload(base64Data, filename) {
+      var raw = atob(base64Data);
+      var bytes = new Uint8Array(raw.length);
+      for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      var blob = new Blob([bytes]);
+      var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
-      a.target = "_blank";
-      a.rel = "noopener";
+      a.download = filename;
+      a.style.position = "fixed";
+      a.style.left = "-9999px";
       document.body.appendChild(a);
       a.click();
       setTimeout(function() { document.body.removeChild(a); }, 200);
+      setTimeout(function() { URL.revokeObjectURL(url); }, 120000);
     }
 
     var isDownloading = false;
@@ -807,48 +931,80 @@ function buildGalleryHtml_(photos, folderId) {
       setDownloadState(true);
 
       if (selectedCards.length === 1) {
-        var url = selectedCards[0].getAttribute("data-download");
-        triggerDirectDownload(url);
-        showDownloadStarted(url);
-        setDownloadState(false);
+        var fileId = selectedCards[0].getAttribute("data-id");
+        showNote("Preparing download\u2026");
+        google.script.run
+          .withSuccessHandler(function(result) {
+            triggerBlobDownload(result.data, result.name);
+            showNote("Download started.");
+            setDownloadState(false);
+          })
+          .withFailureHandler(function(err) {
+            showNote("Download failed: " + (err.message || err));
+            setDownloadState(false);
+          })
+          .getFileBase64(fileId, GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
         return;
       }
 
-      // Multiple files: fetch directly from Drive API (bypasses google.script.run)
-      var fileIds = selectedCards.map(function(card) {
-        return card.getAttribute("data-id");
-      });
-      var fileNames = selectedCards.map(function(card) {
-        return card.getAttribute("data-name");
-      });
+      // Multiple files: fetch each via server, build ZIP client-side
+      var fileIds = selectedCards.map(function(card) { return card.getAttribute("data-id"); });
+      var total = fileIds.length;
       var done = 0;
       var skipped = 0;
-      var total = fileIds.length;
+      var zipFiles = [];
       var startTime = Date.now();
+      var currentIdx = 0;
 
       function showFetchProgress() {
-        var pct = Math.round((done / total) * 100);
+        var pct = Math.round(((done + skipped) / total) * 100);
         var eta = "";
-        if (done > 0) {
+        if (done + skipped > 0) {
           var elapsed = (Date.now() - startTime) / 1000;
-          var perFile = elapsed / done;
-          var remaining = Math.ceil(perFile * (total - done));
+          var perFile = elapsed / (done + skipped);
+          var remaining = Math.ceil(perFile * (total - done - skipped));
           eta = remaining >= 60
             ? Math.floor(remaining / 60) + "m " + (remaining % 60) + "s remaining"
             : remaining + "s remaining";
         } else {
-          eta = "calculating…";
+          eta = "calculating\u2026";
         }
-        showProgress("Fetched " + done + " of " + total + " photos", pct, eta);
+        showProgress("Fetched " + (done + skipped) + " of " + total + " photos", pct, eta);
       }
 
-      function finishZip(zipFiles) {
+      function fetchNext() {
+        if (currentIdx >= total) {
+          finishZip();
+          return;
+        }
+        showFetchProgress();
+        var idx = currentIdx++;
+        google.script.run
+          .withSuccessHandler(function(result) {
+            var raw = atob(result.data);
+            var bytes = new Uint8Array(raw.length);
+            for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            // Sanitize filename: strip path separators to prevent Zip Slip
+            var safeName = result.name.replace(/[\\\/]/g, '_').replace(/^\.+/, '');
+            zipFiles.push({ name: safeName || 'photo', data: bytes });
+            done++;
+            fetchNext();
+          })
+          .withFailureHandler(function(err) {
+            console.error("Failed to fetch file:", err);
+            skipped++;
+            fetchNext();
+          })
+          .getFileBase64(fileIds[idx], GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
+      }
+
+      function finishZip() {
         if (zipFiles.length === 0) {
           showNote("All downloads failed.");
           setDownloadState(false);
           return;
         }
-        showProgress("Building ZIP…", 100, "");
+        showProgress("Building ZIP\u2026", 100, "");
         var zipBlob = _buildZip(zipFiles);
         var url = URL.createObjectURL(zipBlob);
         var a = document.createElement("a");
@@ -867,43 +1023,7 @@ function buildGalleryHtml_(photos, folderId) {
         setDownloadState(false);
       }
 
-      showFetchProgress();
-
-      // Get auth token, then fetch all files in parallel via Drive API
-      google.script.run
-        .withSuccessHandler(function(token) {
-          var fetches = fileIds.map(function(id, idx) {
-            var url = "https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(id) + "?alt=media";
-            return fetch(url, {
-              headers: { "Authorization": "Bearer " + token }
-            })
-            .then(function(response) {
-              if (!response.ok) throw new Error("HTTP " + response.status);
-              return response.arrayBuffer();
-            })
-            .then(function(buffer) {
-              done++;
-              showFetchProgress();
-              return { name: fileNames[idx], data: new Uint8Array(buffer) };
-            })
-            .catch(function(err) {
-              console.error("Failed to fetch file:", err);
-              skipped++;
-              done++;
-              showFetchProgress();
-              return null;
-            });
-          });
-
-          Promise.all(fetches).then(function(results) {
-            finishZip(results.filter(Boolean));
-          });
-        })
-        .withFailureHandler(function(err) {
-          showNote("Failed to start download: " + (err.message || err));
-          setDownloadState(false);
-        })
-        .getDriveToken();
+      fetchNext();
     }
 
     // --- Minimal ZIP builder (STORE, no compression — ideal for JPEGs) ---
@@ -970,41 +1090,16 @@ function buildGalleryHtml_(photos, folderId) {
     function downloadSingle(event, fileId) {
       event.preventDefault();
       event.stopPropagation();
-      // Find the card and use its direct Drive download URL (no server call)
-      var card = document.querySelector('.card[data-id="' + fileId + '"]');
-      if (!card) return;
-      var url = card.getAttribute("data-download");
-      triggerDirectDownload(url);
-      showNote("Download started.");
-    }
-
-    function showDownloadStarted(url) {
-      var note = document.getElementById("downloadNote");
-      var text = document.getElementById("downloadNoteText");
-      var bar = document.getElementById("downloadProgress");
-      var etaEl = document.getElementById("downloadEta");
-      if (!note) return;
-
-      text.innerHTML = "";
-      text.appendChild(document.createTextNode("Download started. "));
-      var link = document.createElement("a");
-      link.href = url;
-      link.target = "_blank";
-      link.rel = "noopener";
-      link.style.color = "#ffffff";
-      link.style.textDecoration = "underline";
-      link.style.cursor = "pointer";
-      link.textContent = "Click here if it didn\u2019t start.";
-      text.appendChild(link);
-
-      if (bar) bar.style.display = "none";
-      if (etaEl) etaEl.textContent = "";
-      note.classList.add("visible");
-
-      window.clearTimeout(window.__downloadNoteTimer);
-      window.__downloadNoteTimer = window.setTimeout(function() {
-        note.classList.remove("visible");
-      }, 10000);
+      showNote("Preparing download\u2026");
+      google.script.run
+        .withSuccessHandler(function(result) {
+          triggerBlobDownload(result.data, result.name);
+          showNote("Download started.");
+        })
+        .withFailureHandler(function(err) {
+          showNote("Download failed: " + (err.message || err));
+        })
+        .getFileBase64(fileId, GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
     }
 
     function showProgress(message, percent, eta) {
@@ -1103,19 +1198,17 @@ function buildGalleryHtml_(photos, folderId) {
       var cards = document.querySelectorAll(".card");
       if (lbCurrentIndex < 0 || lbCurrentIndex >= cards.length) return;
       var card = cards[lbCurrentIndex];
-      var url = card.getAttribute("data-download");
-      var name = card.getAttribute("data-name") || "photo";
-      // Fetch as blob so the download stays in the same tab
-      fetch(url).then(function(r) { return r.blob(); }).then(function(blob) {
-        var a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = name;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 200);
-      }).catch(function() {
-        triggerDirectDownload(url);
-      });
+      var fileId = card.getAttribute("data-id");
+      showNote("Preparing download\u2026");
+      google.script.run
+        .withSuccessHandler(function(result) {
+          triggerBlobDownload(result.data, result.name);
+          showNote("Download started.");
+        })
+        .withFailureHandler(function(err) {
+          showNote("Download failed: " + (err.message || err));
+        })
+        .getFileBase64(fileId, GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
     }
 
     document.addEventListener("keydown", function(e) {
@@ -1143,7 +1236,7 @@ function buildPhotoCard_(photo) {
     : "";
 
   return `
-    <article class="card" data-id="${escapeHtml_(photo.id)}" data-download="${escapeHtml_(photo.downloadUrl)}" data-name="${escapeHtml_(photo.name)}">
+    <article class="card" data-id="${escapeHtml_(photo.id)}" data-name="${escapeHtml_(photo.name)}">
       <div class="media">
         <a class="image-link" href="#" onclick="openLightbox(this); return false;" aria-label="Preview image">
           <img src="${escapeHtml_(photo.previewUrl)}" alt="${escapeHtml_(photo.name)}" loading="lazy">

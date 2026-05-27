@@ -31,7 +31,7 @@ The setup steps are identical. Just use the file that matches your use case.
 1. Click **Deploy → New deployment**.
 2. Click the gear icon → **Web app**.
 3. Set:
-   - **Execute as:** User accessing the web app
+   - **Execute as:** Me
    - **Who has access:** Anyone
 4. Click **Deploy**.
 5. A dialog appears with your **Web App URL**. Copy it and save it somewhere.
@@ -112,23 +112,21 @@ Each client only sees photos from their own folder. None of your personal data i
 
 | Layer        | Setting                                |
 | ------------ | -------------------------------------- |
-| Drive folder | Share → Anyone with the link → Viewer  |
-| Apps Script  | Execute as: User accessing the web app |
+| Drive folder | No extra sharing needed                |
+| Apps Script  | Execute as: Me                         |
 | Google Site  | Share → Restricted → add client emails |
 
-The Site controls who can access the page. Drive is open by link so the gallery loads without issues. Each client sees only the folder you linked in their embed.
+The Site controls who can access the page. The script runs as you (the owner), so it can read your Drive folders without extra sharing. Each client sees only the folder you linked in their embed. No login prompt for visitors.
 
-### Locked-Down Setup (maximum privacy)
+### If you also want direct Drive links to work
 
-| Layer        | Setting                                         |
-| ------------ | ----------------------------------------------- |
-| Drive folder | Share → Restricted → add client emails → Viewer |
-| Apps Script  | Execute as: User accessing the web app          |
-| Google Site  | Share → Restricted → add client emails          |
+If you enable `SHOW_OPEN_BUTTON` ("Open in Drive"), the client needs Drive access to follow that link:
 
-More admin work but each layer is individually locked.
-
-> **Note:** With "Execute as: User accessing the web app", visitors see a one-time Google authorization prompt. This is normal.
+| Layer        | Setting                                |
+| ------------ | -------------------------------------- |
+| Drive folder | Share → Anyone with the link → Viewer  |
+| Apps Script  | Execute as: Me                         |
+| Google Site  | Share → Restricted → add client emails |
 
 ---
 
@@ -164,12 +162,11 @@ These are at the top of the script. Adjust to taste:
 
 These settings only exist in `photo-gallery-webapp-code.gs`:
 
-| Setting                       | Default | Description                           |
-| ----------------------------- | ------- | ------------------------------------- |
-| `SHOW_OPEN_BUTTON`            | `false` | Show "Open in Drive" button on hover  |
-| `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true`  | Show download button on each photo    |
-| `SHOW_SELECT_ALL_BUTTON`      | `true`  | Show "Select all" in toolbar          |
-| `DOWNLOAD_DELAY_MS`           | `650`   | Delay between selected downloads (ms) |
+| Setting                       | Default | Description                          |
+| ----------------------------- | ------- | ------------------------------------ |
+| `SHOW_OPEN_BUTTON`            | `false` | Show "Open in Drive" button on hover |
+| `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true`  | Show download button on each photo   |
+| `SHOW_SELECT_ALL_BUTTON`      | `true`  | Show "Select all" in toolbar         |
 
 ---
 
@@ -195,8 +192,6 @@ These settings only exist in `photo-gallery-webapp-code.gs`:
 | ------------------------- | ------------------------------------------------------------ |
 | "No folder specified"     | Add `?folder=FOLDER_ID` to the URL                           |
 | Gallery shows no images   | Check folder ID is correct and contains image files          |
-| Images don't load         | Ensure Drive folder is shared (at minimum: anyone with link) |
-| Downloads open blank tab  | Normal for Drive CDN; file still downloads                   |
-| Authorization prompt      | Normal on first visit; click Allow                           |
+| Images don't load         | Check the script is deployed and the folder has image files  |
 | Old version still showing | Deploy a new version (see Updating section above)            |
-| "Access denied" error     | Visitor doesn't have permission to the Drive folder          |
+| "Access denied" error     | File is not in the gallery folder, or the folder ID is wrong |

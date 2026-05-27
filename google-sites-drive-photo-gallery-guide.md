@@ -38,8 +38,7 @@ Two variants are available:
 │  ┌─────────────────────────────────────────────────────────────┐    │
 │  │  doGet(e)          → reads ?folder= parameter               │    │
 │  │  getPhotosFromDriveFolder_() → lists images via DriveApp    │    │
-│  │  getDriveToken()   → returns OAuth token for direct API     │    │
-│  │  getFileBase64()   → fallback download with IDOR check      │    │
+│  │  getFileBase64()   → server-side download with IDOR check    │    │
 │  └──────────┬──────────────────────────────────────────────────┘    │
 │             │ generates                                             │
 │             ▼                                                       │
@@ -48,31 +47,30 @@ Two variants are available:
 │  │  Gallery grid       → masonry layout, lazy-loaded thumbnails│    │
 │  │  Selection UI       → checkboxes, select all, count badge   │    │
 │  │  Lightbox           → large preview, arrow nav, preloading  │    │
-│  │  Download engine    → single: direct URL                    │    │
-│  │                     → bulk: Drive API + client-side ZIP     │    │
+│  │  Download engine    → server-side fetch via getFileBase64()  │    │
+│  │                     → bulk: sequential fetch + client ZIP   │    │
 │  └──────────┬──────────────────────────┬───────────────────────┘    │
 └─────────────┼──────────────────────────┼────────────────────────────┘
               │                          │
-              │ thumbnails               │ downloads
+              │ thumbnails               │ downloads (server-side)
               ▼                          ▼
 ┌──────────────────────────┐  ┌──────────────────────────────────┐
-│  Drive Thumbnail API     │  │  Drive REST API v3               │
+│  Drive Thumbnail API     │  │  Apps Script server (DriveApp)   │
 │                          │  │                                  │
-│  /thumbnail?id=X&sz=w800 │  │  Single file:                   │
-│  (gallery previews)      │  │    /uc?export=download&id=X     │
-│                          │  │                                  │
-│  /thumbnail?id=X&sz=w1600│  │  Bulk ZIP:                      │
-│  (lightbox previews)     │  │    /drive/v3/files/X?alt=media  │
-│                          │  │    + Bearer token               │
-└──────────────────────────┘  │    → parallel fetch             │
-                              │    → client-side ZIP builder    │
+│  /thumbnail?id=X&sz=w800 │  │  getFileBase64(fileId, folder)  │
+│  (gallery previews)      │  │    → validates file in folder    │
+│                          │  │    → returns base64 blob         │
+│  /thumbnail?id=X&sz=w1600│  │    → client triggers download   │
+│  (lightbox previews)     │  │                                  │
+│                          │  │  Bulk: sequential server fetch   │
+└──────────────────────────┘  │    → client-side ZIP builder    │
                               └──────────────────────────────────┘
 
 Data flow:
   Viewer opens Site → iframe loads Apps Script → server reads Drive folder
   → sends HTML with thumbnail URLs → browser lazy-loads images from Drive CDN
   → user clicks photo → lightbox shows w1600 preview, preloads neighbors
-  → user downloads → direct Drive URL (single) or API + ZIP (bulk)
+  → user downloads → server fetches file → base64 to client → blob download
 ```
 
 ---
@@ -103,7 +101,27 @@ There are three independent permission layers. Restricting one does not restrict
 
 ### Option A: Site-Gated Access (Recommended)
 
-Google Sites controls who can enter. Drive is open to anyone with the link. The script runs as the visiting user, which lets you tighten Drive permissions later without redeploying.
+Google Sites controls who can enter. The script runs as you (the owner) so it can read your Drive folders directly — no extra sharing required, no login prompt for visitors.
+
+```text
+Google Sites:
+  Share -> Restricted -> add client email(s)
+
+Google Drive folder:
+  No extra sharing needed (script reads it as you)
+
+Apps Script deployment:
+  Execute as: Me
+  Who has access: Anyone
+```
+
+**How it works:** Only people you share the Site with can reach the embedded gallery. The script runs under your account and reads the Drive folder server-side. File downloads go through the server (HMAC-signed folder validation prevents access to anything outside the gallery folder). No OAuth token or credential is ever sent to the client.
+
+**Security:** Downloads are protected by an HMAC signature — the client can only request files from the folder the server rendered the gallery for. Even if someone calls the download function directly, they cannot forge a signature for a different folder.
+
+### Option B: Drive Link Sharing
+
+If you enable `SHOW_OPEN_BUTTON` and want clients to open files directly in Drive, you also need to share the folder.
 
 ```text
 Google Sites:
@@ -111,53 +129,25 @@ Google Sites:
 
 Google Drive folder:
   Share -> Anyone with the link -> Viewer
-  Downloads allowed
 
 Apps Script deployment:
-  Execute as: User accessing the web app
+  Execute as: Me
   Who has access: Anyone
 ```
 
-**How it works:** Only people you share the Site with can reach the embedded gallery. The script runs under their Google account. Since Drive is link-shared, the gallery loads without extra permissions.
-
-**Trade-off:** Visitors see a one-time Google authorization prompt the first time they open the gallery. This is normal for Apps Script running as the user.
-
-**Why this is flexible:** If you later want to restrict Drive access to specific people, you can change the Drive folder to Restricted and add emails — without touching the script or redeploying.
-
-### Option B: Email-Permission Access
-
-Every layer is locked to specific email addresses. Most restrictive option.
-
-```text
-Google Sites:
-  Share -> Restricted -> add client email(s)
-
-Google Drive folder:
-  Share -> Restricted -> add the same client email(s) -> Viewer
-  Downloads allowed
-
-Apps Script deployment:
-  Execute as: User accessing the web app
-  Who has access: Anyone with a Google account
-```
-
-**How it works:** The Site is restricted, the Drive folder is restricted, and the script runs as the visiting user. Each visitor must have explicit Viewer access to the Drive folder or previews and downloads will fail.
-
-**Trade-off:** You must add each client's email to both the Site and the Drive folder. If you miss one, that client gets a broken gallery. More admin work per client, but maximum control.
-
-**When to use this:** Private shoots, sensitive content, or when you want a full audit trail of who accessed what.
+**When to use this:** Only needed if you want the "Open in Drive" button to work. Gallery browsing and downloads work without Drive sharing.
 
 ### Summary
 
-| Setting                      | Option A (Site-Gated) | Option B (Email-Permission) |
-| ---------------------------- | --------------------- | --------------------------- |
-| Google Sites access          | Restricted + emails   | Restricted + emails         |
-| Drive folder access          | Anyone with link      | Restricted + same emails    |
-| Apps Script "Execute as"     | User accessing        | User accessing              |
-| Apps Script "Who has access" | Anyone                | Anyone with Google account  |
-| Auth prompt for visitors     | Yes (once)            | Yes (once)                  |
-| Can tighten Drive later      | Yes, no redeploy      | Already tight               |
-| Admin work per client        | Low                   | Medium                      |
+| Setting                      | Option A (Site-Gated) | Option B (Drive Links) |
+| ---------------------------- | --------------------- | ---------------------- |
+| Google Sites access          | Restricted + emails   | Restricted + emails    |
+| Drive folder access          | No sharing needed     | Anyone with link       |
+| Apps Script "Execute as"     | Me                    | Me                     |
+| Apps Script "Who has access" | Anyone                | Anyone                 |
+| Auth prompt for visitors     | No                    | No                     |
+| "Open in Drive" button works | No                    | Yes                    |
+| Admin work per client        | Low                   | Low                    |
 
 ---
 
@@ -190,7 +180,7 @@ The "unverified app" warning is normal for personal Apps Script projects. Click 
 ### 3. Deploy
 
 1. Click Deploy → New deployment → Web app.
-2. Set "Execute as" and "Who has access" per your security option.
+2. Set "Execute as" to **Me** and "Who has access" to **Anyone**.
 3. Deploy and copy the Web app URL.
 4. Add `?folder=YOUR_FOLDER_ID` to the URL for each client gallery.
 
@@ -232,15 +222,16 @@ Full gallery only (`photo-gallery-webapp-code.gs`):
 | `SHOW_OPEN_BUTTON`            | `false` (default) or `true` — hover Open button     |
 | `SHOW_SINGLE_DOWNLOAD_BUTTON` | `true` (default) or `false` — hover Download button |
 | `SHOW_SELECT_ALL_BUTTON`      | `true` (default) or `false`                         |
-| `DOWNLOAD_DELAY_MS`           | `650` (default) — delay between bulk downloads      |
+
 
 ---
 
 ## Downloads
 
-- **Single file:** Downloads directly from Google Drive CDN.
-- **Multiple files:** Fetched in parallel via the Drive REST API, packaged into a ZIP file client-side, then downloaded as `gallery-photos.zip`.
-- Very large files may show a Drive confirmation page.
+- **Single file:** Fetched server-side via `getFileBase64()`, delivered as a blob download.
+- **Multiple files:** Each file fetched sequentially server-side, packaged into a ZIP client-side, then downloaded as `gallery-photos.zip`.
+- No OAuth token is ever sent to client-side JavaScript.
+- File access is validated server-side (file must belong to the gallery folder).
 
 ---
 
@@ -251,6 +242,5 @@ Full gallery only (`photo-gallery-webapp-code.gs`):
 | "No folder specified"    | Add `?folder=FOLDER_ID` to the web app URL                              |
 | Gallery shows no images  | Folder ID is correct; folder has image files; latest version deployed   |
 | Images do not load       | Drive sharing allows the visitor to view the files                      |
-| Downloads fail           | Visitor has Viewer access; downloads not disabled in Drive              |
+| Downloads fail           | Check the script is deployed as latest version; try redeploying         |
 | Old design still showing | Deploy a new version (Deploy → Manage deployments → Edit → New version) |
-| Authorization warning    | Normal on first visit when script runs as the user                      |
