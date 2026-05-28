@@ -35,6 +35,11 @@ const CONFIG = {
   // Leave empty ("") to disable the access code gate.
   ACCESS_CODE: "",
 
+  // Brute-force protection: max failed attempts per session before lockout.
+  MAX_ATTEMPTS: 5,
+  // How many minutes a session is locked out after exceeding MAX_ATTEMPTS.
+  LOCKOUT_MINUTES: 15,
+
   // Text shown on the access code page.
   ACCESS_TITLE: "Private Gallery",
   ACCESS_PROMPT: "Enter the access code to view this gallery",
@@ -58,6 +63,10 @@ const CONFIG = {
   SHOW_OPEN_BUTTON: false,
   SHOW_SINGLE_DOWNLOAD_BUTTON: true,
   SHOW_SELECT_ALL_BUTTON: true,
+
+  // Custom HTML injected above the gallery grid (below the toolbar).
+  // Use for banners, announcements, instructions, etc.
+  CUSTOM_HTML_TOP: "",
 };
 
 function doGet(e) {
@@ -108,13 +117,61 @@ function doGet(e) {
   // The gallery HTML is never sent until the code is verified server-side.
   if (CONFIG.ACCESS_CODE) {
     var submittedCode = e && e.parameter && e.parameter.code;
+    var submittedHoneypot = e && e.parameter && e.parameter._email;
+    var submittedTs = e && e.parameter && e.parameter._ts;
+
+    // Bot detection: reject if honeypot field is filled.
+    if (submittedHoneypot) {
+      var gatePage = buildAccessCodePage_(e, "");
+      return HtmlService.createHtmlOutput(gatePage)
+        .setTitle(CONFIG.ACCESS_TITLE)
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
+
+    // Bot detection: reject if submitted faster than 2 seconds after page load.
+    if (submittedCode && submittedTs) {
+      var elapsed = Date.now() - parseInt(submittedTs, 10);
+      if (elapsed < 2000) {
+        var gatePage = buildAccessCodePage_(e, "");
+        return HtmlService.createHtmlOutput(gatePage)
+          .setTitle(CONFIG.ACCESS_TITLE)
+          .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+      }
+    }
+
+    // Brute-force protection: track failed attempts per folder.
+    // Refreshing the page does NOT reset the counter.
+    var cache = CacheService.getScriptCache();
+    var rateLimitKey = "attempts_" + folderId;
+    var attempts = parseInt(cache.get(rateLimitKey) || "0", 10);
+
+    if (attempts >= CONFIG.MAX_ATTEMPTS) {
+      var gatePage = buildAccessCodePage_(
+        e,
+        "Too many attempts. Please wait " +
+          CONFIG.LOCKOUT_MINUTES +
+          " minutes.",
+      );
+      return HtmlService.createHtmlOutput(gatePage)
+        .setTitle(CONFIG.ACCESS_TITLE)
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
+
     if (
       !submittedCode ||
       !constantTimeEqual_(CONFIG.ACCESS_CODE, submittedCode)
     ) {
+      // Track failed attempt against the folder.
+      if (submittedCode) {
+        cache.put(
+          rateLimitKey,
+          String(attempts + 1),
+          CONFIG.LOCKOUT_MINUTES * 60,
+        );
+      }
       var errorMsg = submittedCode ? "Incorrect code. Please try again." : "";
-      var html = buildAccessCodePage_(e, errorMsg);
-      return HtmlService.createHtmlOutput(html)
+      var gatePage = buildAccessCodePage_(e, errorMsg);
+      return HtmlService.createHtmlOutput(gatePage)
         .setTitle(CONFIG.ACCESS_TITLE)
         .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     }
@@ -225,7 +282,39 @@ function getFileBase64(fileId, folderId, folderSig) {
   return {
     data: Utilities.base64Encode(file.getBlob().getBytes()),
     name: file.getName(),
+    mimeType: file.getMimeType(),
   };
+}
+
+function getFilesBatch(fileIds, folderId, folderSig) {
+  var expected = signFolderId_(folderId);
+  if (
+    !folderSig ||
+    expected.length !== folderSig.length ||
+    !constantTimeEqual_(expected, folderSig)
+  ) {
+    throw new Error("Access denied.");
+  }
+
+  var galleryFolderId = folderId || CONFIG.FOLDER_ID;
+  var results = [];
+
+  for (var i = 0; i < fileIds.length; i++) {
+    try {
+      var file = DriveApp.getFileById(fileIds[i]);
+      if (!isFileInGalleryFolder_(file, galleryFolderId)) continue;
+      if (!file.getMimeType().match(/^image\//)) continue;
+      results.push({
+        data: Utilities.base64Encode(file.getBlob().getBytes()),
+        name: file.getName(),
+        mimeType: file.getMimeType(),
+      });
+    } catch (e) {
+      // Skip files that fail individually
+    }
+  }
+
+  return results;
 }
 
 function isFileInGalleryFolder_(file, galleryFolderId) {
@@ -300,7 +389,7 @@ function buildAccessCodePage_(e, errorMsg) {
   var params = e && e.parameter ? e.parameter : {};
   var hiddenFields = "";
   for (var key in params) {
-    if (key !== "code") {
+    if (key !== "code" && key !== "_email" && key !== "_ts") {
       hiddenFields +=
         '<input type="hidden" name="' +
         escapeHtml_(key) +
@@ -310,11 +399,13 @@ function buildAccessCodePage_(e, errorMsg) {
     }
   }
 
+  // Get the actual deployment URL so the form submits to the correct endpoint.
+  var scriptUrl = ScriptApp.getService().getUrl();
+
   return `
 <!DOCTYPE html>
 <html>
 <head>
-  <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root {
@@ -340,9 +431,10 @@ function buildAccessCodePage_(e, errorMsg) {
 
     body {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
       min-height: 100vh;
+      padding-top: 10vh;
     }
 
     .access-card {
@@ -416,6 +508,8 @@ function buildAccessCodePage_(e, errorMsg) {
     .access-submit:hover {
       background: #333333;
     }
+
+    .hp-field { position: absolute; left: -9999px; opacity: 0; height: 0; width: 0; overflow: hidden; }
   </style>
 </head>
 <body>
@@ -429,12 +523,15 @@ function buildAccessCodePage_(e, errorMsg) {
     <div class="access-title">${escapeHtml_(CONFIG.ACCESS_TITLE)}</div>
     <div class="access-prompt">${escapeHtml_(CONFIG.ACCESS_PROMPT)}</div>
     ${errorMsg ? '<div class="access-error">' + escapeHtml_(errorMsg) + "</div>" : ""}
-    <form method="GET" action="">
+    <form method="GET" action="${escapeHtml_(scriptUrl)}" target="_self">
       ${hiddenFields}
+      <input type="hidden" name="_ts" value="">
+      <input class="hp-field" type="text" name="_email" tabindex="-1" autocomplete="off">
       <input class="access-input" type="text" name="code" placeholder="Access code" autocomplete="off" autofocus required>
       <button class="access-submit" type="submit">Enter Gallery</button>
     </form>
   </div>
+  <script>document.querySelector('input[name="_ts"]').value = String(Date.now());</script>
 </body>
 </html>
 `;
@@ -471,6 +568,7 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
+      scrollbar-gutter: stable;
     }
 
     body {
@@ -604,10 +702,14 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       color: var(--text);
     }
 
+    .custom-top {
+      margin-bottom: 20px;
+    }
+
     .gallery {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 16px;
       opacity: 0;
       transition: opacity 0.3s ease;
     }
@@ -654,7 +756,7 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
     .card {
       position: relative;
       overflow: hidden;
-      background: #eeeeee;
+      background: var(--bg);
       transition: outline-color 120ms ease;
       outline: 2px solid transparent;
       outline-offset: -2px;
@@ -674,7 +776,6 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       position: relative;
       width: 100%;
       overflow: hidden;
-      background: #eeeeee;
     }
 
     .image-link {
@@ -866,7 +967,7 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
 
       .gallery {
         grid-template-columns: repeat(2, 1fr);
-        gap: 4px;
+        gap: 8px;
       }
 
       .gallery.masonry {
@@ -1029,6 +1130,8 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       </div>
     </header>
 
+    ${CONFIG.CUSTOM_HTML_TOP ? '<div class="custom-top">' + CONFIG.CUSTOM_HTML_TOP + "</div>" : ""}
+
     <section class="gallery" aria-label="Photo gallery">
       ${photoCards || `<div class="empty">No image files were found in this Drive folder.</div>`}
     </section>
@@ -1106,20 +1209,23 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       updateSelection();
     }
 
-    function triggerBlobDownload(base64Data, filename) {
+    function triggerBlobDownload(base64Data, filename, mimeType) {
       var raw = atob(base64Data);
       var bytes = new Uint8Array(raw.length);
       for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-      var blob = new Blob([bytes]);
+      triggerDownload(new Blob([bytes], { type: mimeType || "application/octet-stream" }), filename);
+    }
+
+    function triggerDownload(blob, filename) {
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a");
       a.href = url;
-      a.download = filename;
+      a.download = filename || "download";
       a.style.position = "fixed";
       a.style.left = "-9999px";
       document.body.appendChild(a);
       a.click();
-      setTimeout(function() { document.body.removeChild(a); }, 200);
+      setTimeout(function() { document.body.removeChild(a); }, 500);
       setTimeout(function() { URL.revokeObjectURL(url); }, 120000);
     }
 
@@ -1154,13 +1260,13 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       }
 
       setDownloadState(true);
+      var fileIds = selectedCards.map(function(card) { return card.getAttribute("data-id"); });
 
-      if (selectedCards.length === 1) {
-        var fileId = selectedCards[0].getAttribute("data-id");
+      if (fileIds.length === 1) {
         showNote("Preparing download\u2026");
         google.script.run
           .withSuccessHandler(function(result) {
-            triggerBlobDownload(result.data, result.name);
+            triggerBlobDownload(result.data, result.name, result.mimeType);
             showNote("Download started.");
             setDownloadState(false);
           })
@@ -1168,18 +1274,29 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
             showNote("Download failed: " + (err.message || err));
             setDownloadState(false);
           })
-          .getFileBase64(fileId, GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
+          .getFileBase64(fileIds[0], GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
         return;
       }
 
-      // Multiple files: fetch each via server, build ZIP client-side
-      var fileIds = selectedCards.map(function(card) { return card.getAttribute("data-id"); });
+      // Multiple files: fetch in parallel, build ZIP client-side
+      downloadMultipleAsZip(fileIds);
+    }
+
+    function downloadMultipleAsZip(fileIds) {
       var total = fileIds.length;
       var done = 0;
       var skipped = 0;
       var zipFiles = [];
       var startTime = Date.now();
-      var currentIdx = 0;
+      var BATCH_SIZE = 3;
+      var CONCURRENT = 4;
+
+      // Split file IDs into batches
+      var batches = [];
+      for (var i = 0; i < fileIds.length; i += BATCH_SIZE) {
+        batches.push(fileIds.slice(i, i + BATCH_SIZE));
+      }
+      var currentBatchIdx = 0;
 
       function showFetchProgress() {
         var pct = Math.round(((done + skipped) / total) * 100);
@@ -1197,30 +1314,44 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
         showProgress("Fetched " + (done + skipped) + " of " + total + " photos", pct, eta);
       }
 
-      function fetchNext() {
-        if (currentIdx >= total) {
-          finishZip();
-          return;
+      function processBatchResults(results, batchLen) {
+        for (var i = 0; i < results.length; i++) {
+          var r = results[i];
+          var raw = atob(r.data);
+          var bytes = new Uint8Array(raw.length);
+          for (var j = 0; j < raw.length; j++) bytes[j] = raw.charCodeAt(j);
+          var safeName = r.name.replace(/[\\\/]/g, '_').replace(/^\.+/, '');
+          zipFiles.push({ name: safeName || 'photo.jpg', data: bytes });
+          done++;
         }
+        skipped += batchLen - results.length;
         showFetchProgress();
-        var idx = currentIdx++;
+        if (done + skipped >= total) {
+          finishZip();
+        } else {
+          fetchNextBatch();
+        }
+      }
+
+      function fetchNextBatch() {
+        if (currentBatchIdx >= batches.length) return;
+        var batchIdx = currentBatchIdx++;
+        var batch = batches[batchIdx];
         google.script.run
-          .withSuccessHandler(function(result) {
-            var raw = atob(result.data);
-            var bytes = new Uint8Array(raw.length);
-            for (var i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-            // Sanitize filename: strip path separators to prevent Zip Slip
-            var safeName = result.name.replace(/[\\\/]/g, '_').replace(/^\.+/, '');
-            zipFiles.push({ name: safeName || 'photo', data: bytes });
-            done++;
-            fetchNext();
+          .withSuccessHandler(function(results) {
+            processBatchResults(results, batch.length);
           })
           .withFailureHandler(function(err) {
-            console.error("Failed to fetch file:", err);
-            skipped++;
-            fetchNext();
+            console.error("Batch failed:", err);
+            skipped += batch.length;
+            showFetchProgress();
+            if (done + skipped >= total) {
+              finishZip();
+            } else {
+              fetchNextBatch();
+            }
           })
-          .getFileBase64(fileIds[idx], GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
+          .getFilesBatch(batch, GALLERY_FOLDER_ID, GALLERY_FOLDER_SIG);
       }
 
       function finishZip() {
@@ -1231,27 +1362,21 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
         }
         showProgress("Building ZIP\u2026", 100, "");
         var zipBlob = _buildZip(zipFiles);
-        var url = URL.createObjectURL(zipBlob);
-        var a = document.createElement("a");
-        a.href = url;
-        a.download = "gallery-photos.zip";
-        a.target = "_self";
-        a.style.position = "fixed";
-        a.style.left = "-9999px";
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function() { document.body.removeChild(a); }, 200);
-        setTimeout(function() { URL.revokeObjectURL(url); }, 120000);
+        triggerDownload(zipBlob, "gallery-photos.zip");
         var msg = "ZIP download started (" + zipFiles.length + " photos).";
         if (skipped > 0) msg += " " + skipped + " skipped due to errors.";
         showNote(msg);
         setDownloadState(false);
       }
 
-      fetchNext();
+      // Start concurrent batch fetching
+      showFetchProgress();
+      var initial = Math.min(CONCURRENT, batches.length);
+      for (var c = 0; c < initial; c++) fetchNextBatch();
     }
 
     // --- Minimal ZIP builder (STORE, no compression — ideal for JPEGs) ---
+    // Writes into a single contiguous ArrayBuffer for maximum mobile compatibility.
     var _crcTable = null;
     function _crc32(bytes) {
       if (!_crcTable) {
@@ -1268,48 +1393,80 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
     }
 
     function _buildZip(files) {
-      var parts = [];
-      var cdParts = [];
-      var offset = 0;
+      // Pre-encode filenames and compute CRCs
+      var entries = [];
+      var totalSize = 22; // EOCD record
       for (var i = 0; i < files.length; i++) {
         var nameBytes = new TextEncoder().encode(files[i].name);
         var data = files[i].data;
         var crc = _crc32(data);
-        // Local file header
-        var lh = new ArrayBuffer(30);
-        var lv = new DataView(lh);
-        lv.setUint32(0, 0x04034b50, true);
-        lv.setUint16(4, 20, true);
-        lv.setUint16(8, 0, true);
-        lv.setUint32(14, crc, true);
-        lv.setUint32(18, data.length, true);
-        lv.setUint32(22, data.length, true);
-        lv.setUint16(26, nameBytes.length, true);
-        parts.push(new Uint8Array(lh), nameBytes, data);
-        // Central directory entry
-        var ch = new ArrayBuffer(46);
-        var cv = new DataView(ch);
-        cv.setUint32(0, 0x02014b50, true);
-        cv.setUint16(4, 20, true);
-        cv.setUint16(6, 20, true);
-        cv.setUint16(10, 0, true);
-        cv.setUint32(16, crc, true);
-        cv.setUint32(20, data.length, true);
-        cv.setUint32(24, data.length, true);
-        cv.setUint16(28, nameBytes.length, true);
-        cv.setUint32(42, offset, true);
-        cdParts.push(new Uint8Array(ch), nameBytes);
-        offset += 30 + nameBytes.length + data.length;
+        entries.push({ nameBytes: nameBytes, data: data, crc: crc, offset: 0 });
+        totalSize += 30 + nameBytes.length + data.length; // local header + name + data
+        totalSize += 46 + nameBytes.length;               // central directory entry + name
       }
-      var cdSize = cdParts.reduce(function(s, p) { return s + p.length; }, 0);
-      var eocd = new ArrayBuffer(22);
-      var ev = new DataView(eocd);
-      ev.setUint32(0, 0x06054b50, true);
-      ev.setUint16(8, files.length, true);
-      ev.setUint16(10, files.length, true);
-      ev.setUint32(12, cdSize, true);
-      ev.setUint32(16, offset, true);
-      return new Blob(parts.concat(cdParts, [new Uint8Array(eocd)]), { type: "application/zip" });
+
+      var buf = new ArrayBuffer(totalSize);
+      var v = new DataView(buf);
+      var u8 = new Uint8Array(buf);
+      var p = 0;
+
+      // Write local file headers + data
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        e.offset = p;
+        v.setUint32(p, 0x04034b50, true);        // local file header signature
+        v.setUint16(p + 4, 20, true);             // version needed (2.0)
+        v.setUint16(p + 6, 0, true);              // general purpose bit flag
+        v.setUint16(p + 8, 0, true);              // compression method (STORE)
+        v.setUint16(p + 10, 0x6000, true);        // last mod file time (12:00)
+        v.setUint16(p + 12, 0x5921, true);        // last mod file date (2024-09-01)
+        v.setUint32(p + 14, e.crc, true);         // crc-32
+        v.setUint32(p + 18, e.data.length, true); // compressed size
+        v.setUint32(p + 22, e.data.length, true); // uncompressed size
+        v.setUint16(p + 26, e.nameBytes.length, true); // file name length
+        v.setUint16(p + 28, 0, true);             // extra field length
+        p += 30;
+        u8.set(e.nameBytes, p); p += e.nameBytes.length;
+        u8.set(e.data, p);     p += e.data.length;
+      }
+
+      // Write central directory
+      var cdStart = p;
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        v.setUint32(p, 0x02014b50, true);         // central directory header signature
+        v.setUint16(p + 4, 20, true);              // version made by
+        v.setUint16(p + 6, 20, true);              // version needed
+        v.setUint16(p + 8, 0, true);               // general purpose bit flag
+        v.setUint16(p + 10, 0, true);              // compression method
+        v.setUint16(p + 12, 0x6000, true);         // last mod file time
+        v.setUint16(p + 14, 0x5921, true);         // last mod file date
+        v.setUint32(p + 16, e.crc, true);          // crc-32
+        v.setUint32(p + 20, e.data.length, true);  // compressed size
+        v.setUint32(p + 24, e.data.length, true);  // uncompressed size
+        v.setUint16(p + 28, e.nameBytes.length, true); // file name length
+        v.setUint16(p + 30, 0, true);              // extra field length
+        v.setUint16(p + 32, 0, true);              // file comment length
+        v.setUint16(p + 34, 0, true);              // disk number start
+        v.setUint16(p + 36, 0, true);              // internal file attributes
+        v.setUint32(p + 38, 0, true);              // external file attributes
+        v.setUint32(p + 42, e.offset, true);       // relative offset of local header
+        p += 46;
+        u8.set(e.nameBytes, p); p += e.nameBytes.length;
+      }
+      var cdSize = p - cdStart;
+
+      // Write end of central directory record
+      v.setUint32(p, 0x06054b50, true);            // EOCD signature
+      v.setUint16(p + 4, 0, true);                 // disk number
+      v.setUint16(p + 6, 0, true);                 // disk with central directory
+      v.setUint16(p + 8, entries.length, true);     // entries on this disk
+      v.setUint16(p + 10, entries.length, true);    // total entries
+      v.setUint32(p + 12, cdSize, true);            // size of central directory
+      v.setUint32(p + 16, cdStart, true);           // offset of central directory
+      v.setUint16(p + 20, 0, true);                 // comment length
+
+      return new Blob([buf], { type: "application/zip" });
     }
 
     function downloadSingle(event, fileId) {
@@ -1318,7 +1475,7 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       showNote("Preparing download\u2026");
       google.script.run
         .withSuccessHandler(function(result) {
-          triggerBlobDownload(result.data, result.name);
+          triggerBlobDownload(result.data, result.name, result.mimeType);
           showNote("Download started.");
         })
         .withFailureHandler(function(err) {
@@ -1437,7 +1594,7 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       showNote("Preparing download\u2026");
       google.script.run
         .withSuccessHandler(function(result) {
-          triggerBlobDownload(result.data, result.name);
+          triggerBlobDownload(result.data, result.name, result.mimeType);
           showNote("Download started.");
         })
         .withFailureHandler(function(err) {
@@ -1457,22 +1614,30 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
     updateSelection();
 
     // --- Masonry layout ---
-    var _masonryGap = 8;
+    var _masonryGap = 16;
 
     function applyMasonry() {
       var gallery = document.querySelector(".gallery");
       if (!gallery) return;
       var cards = gallery.querySelectorAll(".card");
-      var gap = window.innerWidth <= 620 ? 4 : _masonryGap;
+      var gap = window.innerWidth <= 620 ? 8 : _masonryGap;
 
       cards.forEach(function(card) {
         card.style.gridRowEnd = "";
       });
       gallery.classList.remove("masonry");
 
+      var colWidth = cards.length > 0 ? cards[0].getBoundingClientRect().width : 0;
+
       cards.forEach(function(card) {
-        var h = card.getBoundingClientRect().height;
-        card.style.gridRowEnd = "span " + Math.ceil(h + gap);
+        var img = card.querySelector("img");
+        var h;
+        if (img && img.naturalWidth && img.naturalHeight) {
+          h = Math.round(colWidth * img.naturalHeight / img.naturalWidth);
+        } else {
+          h = Math.round(card.getBoundingClientRect().height);
+        }
+        card.style.gridRowEnd = "span " + (h + gap);
       });
       gallery.classList.add("masonry");
     }

@@ -44,6 +44,10 @@ const CONFIG = {
 
   // Sorting: "name", "newest", or "oldest".
   SORT_BY: "name",
+
+  // Custom HTML injected above the gallery grid (below the toolbar).
+  // Use for banners, announcements, instructions, etc.
+  CUSTOM_HTML_TOP: "",
 };
 
 function doGet(e) {
@@ -233,6 +237,7 @@ function buildGalleryHtml_(photos) {
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
+      scrollbar-gutter: stable;
     }
 
     body {
@@ -291,10 +296,14 @@ function buildGalleryHtml_(photos) {
       white-space: nowrap;
     }
 
+    .custom-top {
+      margin-bottom: 20px;
+    }
+
     .gallery {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 16px;
       opacity: 0;
       transition: opacity 0.3s ease;
     }
@@ -341,7 +350,7 @@ function buildGalleryHtml_(photos) {
     .card {
       position: relative;
       overflow: hidden;
-      background: #eeeeee;
+      background: var(--bg);
       cursor: pointer;
       transition: outline-color 120ms ease;
       outline: 2px solid transparent;
@@ -357,7 +366,6 @@ function buildGalleryHtml_(photos) {
       position: relative;
       width: 100%;
       overflow: hidden;
-      background: #eeeeee;
     }
 
     .image-link {
@@ -400,7 +408,7 @@ function buildGalleryHtml_(photos) {
 
       .gallery {
         grid-template-columns: repeat(2, 1fr);
-        gap: 4px;
+        gap: 8px;
       }
 
       .gallery.masonry {
@@ -513,6 +521,8 @@ function buildGalleryHtml_(photos) {
       <div class="photo-count">${photos.length} photo${photos.length !== 1 ? "s" : ""}</div>
     </header>
 
+    ${CONFIG.CUSTOM_HTML_TOP ? '<div class="custom-top">' + CONFIG.CUSTOM_HTML_TOP + "</div>" : ""}
+
     <section class="gallery" aria-label="Photo gallery">
       ${photoCards || `<div class="empty">No image files were found in this Drive folder.</div>`}
     </section>
@@ -613,22 +623,30 @@ function buildGalleryHtml_(photos) {
     });
 
     // --- Masonry layout ---
-    var _masonryGap = 8;
+    var _masonryGap = 16;
 
     function applyMasonry() {
       var gallery = document.querySelector(".gallery");
       if (!gallery) return;
       var cards = gallery.querySelectorAll(".card");
-      var gap = window.innerWidth <= 620 ? 4 : _masonryGap;
+      var gap = window.innerWidth <= 620 ? 8 : _masonryGap;
 
       cards.forEach(function(card) {
         card.style.gridRowEnd = "";
       });
       gallery.classList.remove("masonry");
 
+      var colWidth = cards.length > 0 ? cards[0].getBoundingClientRect().width : 0;
+
       cards.forEach(function(card) {
-        var h = card.getBoundingClientRect().height;
-        card.style.gridRowEnd = "span " + Math.ceil(h + gap);
+        var img = card.querySelector("img");
+        var h;
+        if (img && img.naturalWidth && img.naturalHeight) {
+          h = Math.round(colWidth * img.naturalHeight / img.naturalWidth);
+        } else {
+          h = Math.round(card.getBoundingClientRect().height);
+        }
+        card.style.gridRowEnd = "span " + (h + gap);
       });
       gallery.classList.add("masonry");
     }
