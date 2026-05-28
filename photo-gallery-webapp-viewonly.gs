@@ -292,20 +292,61 @@ function buildGalleryHtml_(photos) {
     }
 
     .gallery {
-      column-count: 3;
-      column-gap: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .gallery.masonry {
+      grid-auto-rows: 1px;
+      row-gap: 0;
+    }
+
+    .gallery.ready {
+      opacity: 1;
+    }
+
+    .gallery-loader {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 24px;
+      color: var(--muted);
+      font-size: 13px;
+      gap: 10px;
+    }
+
+    .gallery-loader.hidden {
+      display: none;
+    }
+
+    .loader-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--muted);
+      border-radius: 50%;
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    .loader-dot:nth-child(2) { animation-delay: 0.15s; }
+    .loader-dot:nth-child(3) { animation-delay: 0.3s; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1); }
     }
 
     .card {
       position: relative;
       overflow: hidden;
-      background: var(--bg);
-      break-inside: avoid;
-      margin-bottom: 16px;
+      background: #eeeeee;
       cursor: pointer;
       transition: outline-color 120ms ease;
       outline: 2px solid transparent;
       outline-offset: -2px;
+      line-height: 0;
     }
 
     .card:hover {
@@ -322,7 +363,6 @@ function buildGalleryHtml_(photos) {
     .image-link {
       display: block;
       width: 100%;
-      height: 100%;
       text-decoration: none;
     }
 
@@ -359,12 +399,12 @@ function buildGalleryHtml_(photos) {
       }
 
       .gallery {
-        column-count: 2;
-        column-gap: 10px;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px;
       }
 
-      .card {
-        margin-bottom: 10px;
+      .gallery.masonry {
+        row-gap: 0;
       }
     }
 
@@ -372,13 +412,15 @@ function buildGalleryHtml_(photos) {
     .lightbox {
       display: none;
       position: fixed;
-      inset: 0;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       z-index: 200;
       background: rgba(0,0,0,0.92);
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
-      padding-top: 60px;
+      justify-content: center;
     }
 
     .lightbox.open {
@@ -388,43 +430,42 @@ function buildGalleryHtml_(photos) {
     .lb-close, .lb-prev, .lb-next {
       position: absolute;
       z-index: 210;
-      background: none;
+      background: rgba(0,0,0,0.4);
       border: none;
-      color: rgba(255,255,255,0.7);
+      color: #ffffff;
       cursor: pointer;
       padding: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: color 120ms ease, background 120ms ease;
+      transition: background 120ms ease;
       border-radius: 50%;
     }
 
     .lb-close:hover, .lb-prev:hover, .lb-next:hover {
-      color: #ffffff;
-      background: rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.2);
     }
 
     .lb-close {
-      top: 12px;
-      right: 12px;
-      width: 44px;
-      height: 44px;
+      top: 16px;
+      right: 16px;
+      width: 48px;
+      height: 48px;
     }
 
     .lb-prev, .lb-next {
       top: 50%;
       transform: translateY(-50%);
-      width: 48px;
-      height: 48px;
+      width: 52px;
+      height: 52px;
     }
 
-    .lb-prev { left: 12px; }
-    .lb-next { right: 12px; }
+    .lb-prev { left: 16px; }
+    .lb-next { right: 16px; }
 
     .lb-image {
-      max-width: calc(100vw - 120px);
-      max-height: calc(100vh - 100px);
+      max-width: calc(100vw - 100px);
+      max-height: calc(100vh - 40px);
       object-fit: contain;
       user-select: none;
     }
@@ -434,10 +475,14 @@ function buildGalleryHtml_(photos) {
       top: 16px;
       left: 50%;
       transform: translateX(-50%);
-      color: rgba(255,255,255,0.6);
-      font-size: 13px;
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 500;
       z-index: 210;
       pointer-events: none;
+      background: rgba(0,0,0,0.4);
+      padding: 4px 12px;
+      border-radius: 12px;
     }
 
     @media (max-width: 620px) {
@@ -471,6 +516,11 @@ function buildGalleryHtml_(photos) {
     <section class="gallery" aria-label="Photo gallery">
       ${photoCards || `<div class="empty">No image files were found in this Drive folder.</div>`}
     </section>
+    <div class="gallery-loader" id="galleryLoader">
+      <span class="loader-dot"></span>
+      <span class="loader-dot"></span>
+      <span class="loader-dot"></span>
+    </div>
   </main>
 
   <div class="lightbox" id="lightbox" onclick="if(event.target===this)closeLightbox()">
@@ -515,24 +565,34 @@ function buildGalleryHtml_(photos) {
       }
     }
 
+    var _lbSavedScrollY = 0;
+
     function showLightboxAt(index) {
       var cards = document.querySelectorAll(".card");
       if (index < 0 || index >= cards.length) return;
       lbCurrentIndex = index;
+      _lbSavedScrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
       var card = cards[index];
       var fileId = card.getAttribute("data-id");
       var img = document.getElementById("lbImage");
       img.src = _lbThumbUrl(fileId);
       img.alt = card.getAttribute("data-name") || "";
       document.getElementById("lbCounter").textContent = (index + 1) + " / " + cards.length;
+      // Lock body in place to prevent scroll jump
+      document.body.style.position = "fixed";
+      document.body.style.top = "-" + _lbSavedScrollY + "px";
+      document.body.style.width = "100%";
       document.getElementById("lightbox").classList.add("open");
-      document.body.style.overflow = "hidden";
       _preloadLightbox(cards, index);
     }
 
     function closeLightbox() {
       document.getElementById("lightbox").classList.remove("open");
-      document.body.style.overflow = "";
+      // Unlock body and restore scroll position
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.width = "";
+      window.scrollTo(0, _lbSavedScrollY);
       lbCurrentIndex = -1;
     }
 
@@ -551,6 +611,61 @@ function buildGalleryHtml_(photos) {
       else if (e.key === "ArrowLeft") navigateLightbox(-1);
       else if (e.key === "ArrowRight") navigateLightbox(1);
     });
+
+    // --- Masonry layout ---
+    var _masonryGap = 8;
+
+    function applyMasonry() {
+      var gallery = document.querySelector(".gallery");
+      if (!gallery) return;
+      var cards = gallery.querySelectorAll(".card");
+      var gap = window.innerWidth <= 620 ? 4 : _masonryGap;
+
+      cards.forEach(function(card) {
+        card.style.gridRowEnd = "";
+      });
+      gallery.classList.remove("masonry");
+
+      cards.forEach(function(card) {
+        var h = card.getBoundingClientRect().height;
+        card.style.gridRowEnd = "span " + Math.ceil(h + gap);
+      });
+      gallery.classList.add("masonry");
+    }
+
+    var _loadedCount = 0;
+    var _totalImages = document.querySelectorAll(".card img").length;
+
+    function onGalleryImageLoad() {
+      _loadedCount++;
+      if (_loadedCount >= _totalImages) {
+        applyMasonry();
+        document.querySelector(".gallery").classList.add("ready");
+        var loader = document.getElementById("galleryLoader");
+        if (loader) loader.classList.add("hidden");
+      }
+    }
+
+    if (_totalImages === 0) {
+      document.querySelector(".gallery").classList.add("ready");
+      var loader = document.getElementById("galleryLoader");
+      if (loader) loader.classList.add("hidden");
+    }
+
+    document.querySelectorAll(".card img").forEach(function(img) {
+      if (img.complete && img.naturalWidth) {
+        onGalleryImageLoad();
+      } else {
+        img.addEventListener("load", onGalleryImageLoad);
+        img.addEventListener("error", onGalleryImageLoad);
+      }
+    });
+
+    var _resizeTimer;
+    window.addEventListener("resize", function() {
+      clearTimeout(_resizeTimer);
+      _resizeTimer = setTimeout(applyMasonry, 150);
+    });
   </script>
 </body>
 </html>
@@ -562,7 +677,7 @@ function buildPhotoCard_(photo) {
     <article class="card" data-id="${escapeHtml_(photo.id)}" data-name="${escapeHtml_(photo.name)}">
       <div class="media">
         <a class="image-link" href="#" onclick="openLightbox(this); return false;" aria-label="Preview image">
-          <img src="${escapeHtml_(photo.previewUrl)}" alt="${escapeHtml_(photo.name)}" loading="lazy">
+          <img src="${escapeHtml_(photo.previewUrl)}" alt="${escapeHtml_(photo.name)}">
         </a>
       </div>
     </article>`;

@@ -1,21 +1,21 @@
 /*******************************************************
- * Google Drive Photo Gallery Web App for Google Sites
+ * Google Drive Photo Gallery Web App — Access Code Protected
  *
  * What it does:
- * - Reads every image from one Google Drive folder.
- * - Builds a clean portfolio-style gallery automatically.
- * - Hides filenames visually for a premium look.
- * - Places a selector directly on each image.
- * - Lets users select images and download originals.
- * - Is designed to be embedded into Google Sites.
+ * - Same as the full gallery (selection + download).
+ * - Adds an access code gate: visitors must enter the
+ *   correct code before the gallery loads.
+ * - The code is checked server-side — the gallery HTML
+ *   is never sent to the browser until the code is verified.
  *
  * Setup:
  * 1. Replace FOLDER_ID below with your Google Drive folder ID.
- * 2. Deploy as Web app.
- * 3. Recommended deployment:
+ * 2. Set ACCESS_CODE to a secret code you share with clients.
+ * 3. Deploy as Web app.
+ * 4. Recommended deployment:
  *    - Execute as: Me
  *    - Who has access: Anyone
- * 4. Embed the Web app URL into Google Sites.
+ * 5. Embed the Web app URL or share it directly.
  *******************************************************/
 
 const CONFIG = {
@@ -29,6 +29,15 @@ const CONFIG = {
     // "folder-id-1",
     // "folder-id-2",
   ],
+
+  // ── Access Code ──────────────────────────────────────
+  // Set this to a non-empty string to require an access code.
+  // Leave empty ("") to disable the access code gate.
+  ACCESS_CODE: "",
+
+  // Text shown on the access code page.
+  ACCESS_TITLE: "Private Gallery",
+  ACCESS_PROMPT: "Enter the access code to view this gallery",
 
   // Text shown in the clean top toolbar.
   GALLERY_TITLE: "Client Gallery",
@@ -92,6 +101,23 @@ function doGet(e) {
     }
 
     folderId = paramFolder;
+  }
+
+  // ── Access code gate ──────────────────────────────────
+  // If an access code is configured, show the code entry page first.
+  // The gallery HTML is never sent until the code is verified server-side.
+  if (CONFIG.ACCESS_CODE) {
+    var submittedCode = e && e.parameter && e.parameter.code;
+    if (
+      !submittedCode ||
+      !constantTimeEqual_(CONFIG.ACCESS_CODE, submittedCode)
+    ) {
+      var errorMsg = submittedCode ? "Incorrect code. Please try again." : "";
+      var html = buildAccessCodePage_(e, errorMsg);
+      return HtmlService.createHtmlOutput(html)
+        .setTitle(CONFIG.ACCESS_TITLE)
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
   }
 
   const html = buildGalleryHtml_(
@@ -262,6 +288,156 @@ function sortPhotos_(photos) {
   };
 
   photos.sort(comparators[CONFIG.SORT_BY] || comparators.name);
+}
+
+// ── Access Code Page ──────────────────────────────────
+// A minimal, styled page with a single code input field.
+// Submits via GET so it works inside iframes without cross-origin issues.
+
+function buildAccessCodePage_(e, errorMsg) {
+  // Reconstruct the current URL's query parameters (minus "code") so the
+  // form re-submits to the same URL with the code appended.
+  var params = e && e.parameter ? e.parameter : {};
+  var hiddenFields = "";
+  for (var key in params) {
+    if (key !== "code") {
+      hiddenFields +=
+        '<input type="hidden" name="' +
+        escapeHtml_(key) +
+        '" value="' +
+        escapeHtml_(params[key]) +
+        '">';
+    }
+  }
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #111111;
+      --muted: #666666;
+      --line: rgba(0,0,0,0.10);
+      --error: #d32f2f;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .access-card {
+      width: 100%;
+      max-width: 380px;
+      padding: 40px 32px;
+      text-align: center;
+    }
+
+    .access-lock {
+      margin-bottom: 20px;
+      color: var(--muted);
+    }
+
+    .access-title {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .access-prompt {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 24px;
+      line-height: 1.4;
+    }
+
+    .access-error {
+      font-size: 13px;
+      color: var(--error);
+      margin-bottom: 16px;
+    }
+
+    .access-input {
+      width: 100%;
+      padding: 12px 14px;
+      font: inherit;
+      font-size: 14px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--text);
+      text-align: center;
+      letter-spacing: 0.08em;
+      outline: none;
+      transition: border-color 120ms ease;
+    }
+
+    .access-input:focus {
+      border-color: var(--text);
+    }
+
+    .access-submit {
+      width: 100%;
+      margin-top: 12px;
+      padding: 12px 14px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      appearance: none;
+      border: 1px solid var(--text);
+      background: var(--text);
+      color: #ffffff;
+      transition: background 120ms ease;
+    }
+
+    .access-submit:hover {
+      background: #333333;
+    }
+  </style>
+</head>
+<body>
+  <div class="access-card">
+    <div class="access-lock">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+    </div>
+    <div class="access-title">${escapeHtml_(CONFIG.ACCESS_TITLE)}</div>
+    <div class="access-prompt">${escapeHtml_(CONFIG.ACCESS_PROMPT)}</div>
+    ${errorMsg ? '<div class="access-error">' + escapeHtml_(errorMsg) + "</div>" : ""}
+    <form method="GET" action="">
+      ${hiddenFields}
+      <input class="access-input" type="text" name="code" placeholder="Access code" autocomplete="off" autofocus required>
+      <button class="access-submit" type="submit">Enter Gallery</button>
+    </form>
+  </div>
+</body>
+</html>
+`;
 }
 
 function buildGalleryHtml_(photos, folderId, folderSig) {
@@ -757,18 +933,18 @@ function buildGalleryHtml_(photos, folderId, folderSig) {
       background: rgba(255,255,255,0.2);
     }
 
-    .lb-close {
-      top: 16px;
-      right: 16px;
-      width: 48px;
-      height: 48px;
-    }
-
     .lb-prev, .lb-next {
       top: 50%;
       transform: translateY(-50%);
       width: 52px;
       height: 52px;
+    }
+
+    .lb-close {
+      top: 16px;
+      right: 16px;
+      width: 48px;
+      height: 48px;
     }
 
     .lb-prev { left: 16px; }
